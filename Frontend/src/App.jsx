@@ -1,5 +1,5 @@
 import React from 'react';
-import { Routes, Route } from 'react-router-dom'; // <-- Removed BrowserRouter from here
+import { Routes, Route } from 'react-router-dom';
 import LandingPage from './LandingPage';
 import Dashboard from './Dashboard';
 

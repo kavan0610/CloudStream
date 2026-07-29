@@ -1,8 +1,9 @@
-// src/services/api.js
 import axios from 'axios';
 
+const BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:5000/api';
+
 const api = axios.create({
-  baseURL: 'http://127.0.0.1:5000/api'
+  baseURL: BASE_URL
 });
 
 export const libraryApi = {
@@ -11,13 +12,11 @@ export const libraryApi = {
 };
 
 export const playlistApi = {
-  // Existing Favorites generator
   createFavoritesPlaylist: (userId) => api.post('/playlists', { 
     name: 'Favorites', 
     userId, 
     coverImage: 'bg-gradient-to-br from-indigo-500/20 to-purple-500/20' 
   }),
-  // New standard endpoints
   fetchUserPlaylists: (userId) => api.get(`/playlists/user/${userId}`),
   fetchPlaylist: (playlistId) => api.get(`/playlists/${playlistId}`),
   createPlaylist: (userId, name, coverImage) => api.post('/playlists', { userId, name, coverImage }),

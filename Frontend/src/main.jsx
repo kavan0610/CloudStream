@@ -10,7 +10,6 @@ const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
-      {/* Wrapping the entire app in BrowserRouter guarantees routing works everywhere */}
       <BrowserRouter>
         <App />
       </BrowserRouter>
