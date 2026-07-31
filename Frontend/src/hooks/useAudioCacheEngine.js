@@ -1,4 +1,3 @@
-// src/hooks/useAudioCacheEngine.js
 import { useEffect, useCallback } from 'react';
 
 export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex, repeatMode) => {
@@ -65,17 +64,22 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
   }, [currentIndex, queue, driveToken, repeatMode, audioCache]);
 
   // SPECULATIVE UI PRELOADER
-  const preloadContext = useCallback((tracks) => {
-    if (!tracks || tracks.length === 0 || !driveToken) return;
+  const preloadContext = useCallback((originalQueue = [], shuffledQueue = []) => {
+    if (!originalQueue || originalQueue.length === 0 || !driveToken) return;
 
-    const firstTrack = tracks[0];
-    const randomTrack = tracks[Math.floor(Math.random() * tracks.length)];
+    // Pick the first 2 from normal queue and first 2 from shuffle queue
+    const tracksToPreload = [
+      originalQueue[0], originalQueue[1],
+      shuffledQueue[0], shuffledQueue[1]
+    ].filter(Boolean);
 
-    const tracksToPreload = [firstTrack, randomTrack].filter((t, index, self) => 
-      t && self.findIndex(s => s.id === t.id) === index && !audioCache.current[t.id]
+    // Deduplicate (in case the randomly shuffled top 2 are also the actual top 2)
+    // and filter out ones we've already cached
+    const uniqueTracks = tracksToPreload.filter((t, index, self) => 
+      self.findIndex(s => s.id === t.id) === index && !audioCache.current[t.id]
     );
 
-    tracksToPreload.forEach(track => {
+    uniqueTracks.forEach(track => {
       audioCache.current[track.id] = 'downloading'; 
       fetch(`https://www.googleapis.com/drive/v3/files/${track.driveFileId}?alt=media`, {
         headers: { Authorization: `Bearer ${driveToken}` }

@@ -14,7 +14,7 @@ const TrackTable = ({ tracks, loading, isAddMode = false, selectedIds = [], onTo
   }
 
   return (
-    <div className="w-full bg-white/5 border border-white/5 rounded-2xl md:rounded-3xl overflow-hidden backdrop-blur-sm mb-12">
+    <div className="w-full bg-white/5 border border-white/5 rounded-2xl md:rounded-3xl overflow-hidden backdrop-blur-sm mb-24 md:mb-12">
       <table className="w-full text-left border-collapse">
         <thead>
           <tr className="border-b border-white/5 bg-white/[0.02] text-xs text-gray-500 uppercase tracking-widest font-mono">

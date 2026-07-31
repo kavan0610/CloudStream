@@ -7,7 +7,7 @@ import { useSyncEngine } from './hooks/useSyncEngine';
 import { usePlaylists } from './hooks/usePlaylists';
 import { useLibraryManager } from './hooks/useLibraryManager';
 import { useAuthManager } from './hooks/useAuthManager';
-import { AudioProvider } from './context/AudioContext';
+import { AudioProvider, useAudio } from './context/AudioContext'; // <-- Added useAudio
 
 // UI Components
 import Header from './components/Header';
@@ -21,6 +21,21 @@ import CreatePlaylistModal from './components/CreatePlaylistModal';
 import EditPlaylistModal from './components/EditPlaylistModal';
 import AudioPlayer from './components/AudioPlayer';
 import SyncIndicator from './components/SyncIndicator';
+
+// --- INVISIBLE PRELOADER FOR MAIN LIBRARY ---
+const LibraryPreloader = ({ tracks }) => {
+  const { prepareContext, preloadContext, currentTrack } = useAudio();
+
+  useEffect(() => {
+    // Only speculatively load if we have tracks AND nothing is currently playing
+    if (tracks && tracks.length > 0 && !currentTrack) {
+      const { original, shuffled } = prepareContext(tracks);
+      preloadContext(original, shuffled);
+    }
+  }, [tracks, prepareContext, preloadContext, currentTrack]);
+
+  return null;
+};
 
 // --- URL-BASED PLAYLIST ROUTER ---
 const PlaylistRoute = ({ playlists, tracks, deletePlaylist, refreshSinglePlaylist, fetchLibrary, updatePlaylistOptimistically }) => {
@@ -118,6 +133,9 @@ const Dashboard = () => {
               <Routes>
                 <Route path="/" element={
                   <>
+                    {/* NEW: Preloader silently handles cache while user views the dashboard */}
+                    <LibraryPreloader tracks={tracks} />
+                    
                     <PlaylistRow 
                       playlists={playlists} 
                       onCreateClick={() => setIsCreatePlaylistOpen(true)} 

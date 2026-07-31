@@ -9,17 +9,20 @@ const PlaylistPage = ({ playlist, onBack, libraryTracks = [], onDelete, onRefres
   const [isAddSongsOpen, setIsAddSongsOpen] = useState(false);
   const [isEditSongsOpen, setIsEditSongsOpen] = useState(false);
   
-  const { playContext, preloadContext, syncActiveContext } = useAudio();
+  // ADDED prepareContext here
+  const { prepareContext, playContext, preloadContext, syncActiveContext } = useAudio();
 
   const flattenedTracks = useMemo(() => {
     return playlist?.tracks ? playlist.tracks.map(pt => pt.track) : [];
   }, [playlist?.tracks]);
 
+  // UPDATED: Calculate the zero-latency queues and preload both!
   useEffect(() => {
     if (flattenedTracks.length > 0) {
-      preloadContext(flattenedTracks);
+      const { original, shuffled } = prepareContext(flattenedTracks);
+      preloadContext(original, shuffled);
     }
-  }, [flattenedTracks, preloadContext]);
+  }, [flattenedTracks, prepareContext, preloadContext]);
 
   useEffect(() => {
     const handleKeyDown = (e) => { if (e.key === 'Escape') onBack(); };

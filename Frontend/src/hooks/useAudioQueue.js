@@ -17,30 +17,49 @@ export const useAudioQueue = (audioCache) => {
   const [repeatMode, setRepeatMode] = useState('none');
   const isShufflingRef = useRef(false);
 
+  // Store the pre-calculated queues in the background
+  const preparedRef = useRef({ original: [], shuffled: [] });
+
   const currentTrack = queue[currentIndex] || null;
+
+  // Pre-calculate the shuffle queue without starting playback
+  const prepareContext = useCallback((tracks) => {
+    if (!tracks || tracks.length === 0) return { original: [], shuffled: [] };
+    const shuffled = shuffleArray(tracks);
+    preparedRef.current = { original: tracks, shuffled };
+    return { original: tracks, shuffled };
+  }, []);
 
   const playContext = useCallback((tracks, startIndex = 0, startShuffled = false) => {
     setContextTracks(tracks);
     setIsShuffled(startShuffled);
 
+    // Verify if we are playing the exact playlist we just pre-calculated
+    const isPrepared = preparedRef.current.original.length > 0 && 
+                       preparedRef.current.original[0]?.id === tracks[0]?.id;
+
     if (startShuffled) {
-      let shuffled = shuffleArray(tracks);
-      const cachedTrack = shuffled.find(t => 
-        audioCache.current[t.id] && audioCache.current[t.id] !== 'downloading'
-      );
-
-      if (cachedTrack) {
-        shuffled = shuffled.filter(t => t.id !== cachedTrack.id);
-        shuffled.unshift(cachedTrack);
+      if (isPrepared && startIndex === 0) {
+        // User clicked the main Shuffle button - use pre-calculated queue!
+        setQueue(preparedRef.current.shuffled);
+        setCurrentIndex(0);
+      } else {
+        // Fallback: User clicked a specific song while shuffle was on
+        let shuffledQueue = shuffleArray(tracks);
+        if (startIndex > 0) {
+          const clickedTrack = tracks[startIndex];
+          shuffledQueue = shuffledQueue.filter(t => t.id !== clickedTrack.id);
+          shuffledQueue.unshift(clickedTrack);
+        }
+        setQueue(shuffledQueue);
+        setCurrentIndex(0);
       }
-
-      setQueue(shuffled);
-      setCurrentIndex(0);
     } else {
+      // Regular play button or clicked specific song - gapless preloader takes over
       setQueue(tracks);
       setCurrentIndex(startIndex);
     }
-  }, [audioCache]);
+  }, []);
 
   const toggleShuffle = useCallback(() => {
     if (!currentTrack) return;
@@ -108,6 +127,6 @@ export const useAudioQueue = (audioCache) => {
 
   return {
     queue, currentIndex, setCurrentIndex, isShuffled, repeatMode, currentTrack, isShufflingRef,
-    playContext, toggleShuffle, toggleRepeat, syncActiveContext
+    prepareContext, playContext, toggleShuffle, toggleRepeat, syncActiveContext
   };
 };

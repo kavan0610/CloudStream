@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useAudio } from '../context/AudioContext';
 
 const formatTime = (time) => {
@@ -14,25 +14,51 @@ const AudioPlayer = () => {
     togglePlay, handleNext, handlePrev, seek, changeVolume, toggleShuffle, toggleRepeat
   } = useAudio();
 
+  // // --- NEW: Media Session API (Hardware Keys & Lock Screen Support) ---
+  // useEffect(() => {
+  //   if ('mediaSession' in navigator) {
+      
+  //     // 1. Update the Lock Screen / OS Media Player with the current song info
+  //     if (currentTrack) {
+  //       navigator.mediaSession.metadata = new window.MediaMetadata({
+  //         title: currentTrack.title,
+  //         artist: currentTrack.artist || 'Unknown Artist',
+  //         album: currentTrack.album || 'Unknown Album',
+  //       });
+  //     }
+
+  //     // 2. Bind hardware buttons (Earphones, Keyboards, Mobile Lock Screen)
+  //     navigator.mediaSession.setActionHandler('play', () => {
+  //       if (!isPlaying) togglePlay();
+  //     });
+  //     navigator.mediaSession.setActionHandler('pause', () => {
+  //       if (isPlaying) togglePlay();
+  //     });
+  //     navigator.mediaSession.setActionHandler('previoustrack', handlePrev);
+  //     navigator.mediaSession.setActionHandler('nexttrack', handleNext);
+  //   }
+  // }, [currentTrack, isPlaying, togglePlay, handlePrev, handleNext]);
+
+  // Hooks must be called before early returns
   if (!currentTrack) return null;
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 h-24 bg-[#0B0F19]/95 backdrop-blur-xl border-t border-white/10 px-6 flex items-center justify-between z-[100] animate-fade-in">
+    <div className="fixed bottom-0 left-0 right-0 bg-[#0B0F19]/95 backdrop-blur-xl border-t border-white/10 z-[100] animate-fade-in px-4 py-3 md:px-6 md:py-0 md:h-24 flex flex-col md:flex-row items-center justify-between gap-3 md:gap-0 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
       
       {/* 1. Track Info */}
-      <div className="flex items-center gap-4 w-1/4 min-w-[200px]">
-        <div className="w-14 h-14 bg-white/10 rounded-lg flex items-center justify-center flex-shrink-0">
-          <svg className="w-6 h-6 text-gray-400" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"></path></svg>
+      <div className="flex items-center gap-3 w-full md:w-1/4 md:min-w-[200px]">
+        <div className="w-12 h-12 md:w-14 md:h-14 bg-white/10 rounded-lg flex items-center justify-center flex-shrink-0">
+          <svg className="w-5 h-5 md:w-6 md:h-6 text-gray-400" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"></path></svg>
         </div>
-        <div className="min-w-0">
-          <p className="font-bold text-white truncate text-sm">{currentTrack.title}</p>
+        <div className="min-w-0 flex-1">
+          <p className="font-bold text-white truncate text-sm md:text-base">{currentTrack.title}</p>
           <p className="text-xs text-gray-400 truncate">{currentTrack.artist || 'Unknown Artist'}</p>
         </div>
       </div>
 
       {/* 2. Controls */}
-      <div className="flex flex-col items-center flex-1 max-w-2xl px-4">
-        <div className="flex items-center gap-6 mb-2">
+      <div className="flex flex-col items-center w-full md:flex-1 md:max-w-2xl px-0 md:px-4">
+        <div className="flex items-center gap-5 md:gap-6 mb-1 md:mb-2">
           {/* Shuffle Button */}
           <button onClick={toggleShuffle} className={`transition-colors ${isShuffled ? 'text-emerald-500' : 'text-gray-400 hover:text-white'}`}>
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
@@ -70,18 +96,19 @@ const AudioPlayer = () => {
           </button>
         </div>
 
-        <div className="flex items-center gap-3 w-full text-xs text-gray-400">
+        <div className="flex items-center gap-3 w-full text-[10px] md:text-xs text-gray-400">
           <span>{formatTime(progress)}</span>
           <input type="range" min="0" max={duration || 100} value={progress} onChange={(e) => seek(Number(e.target.value))} className="flex-1 h-1 bg-white/10 rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full cursor-pointer accent-white" />
           <span>{formatTime(duration)}</span>
         </div>
       </div>
 
-      {/* 3. Volume */}
-      <div className="flex items-center gap-3 w-1/4 justify-end min-w-[150px]">
+      {/* 3. Volume - Hidden on Mobile */}
+      <div className="hidden md:flex items-center gap-3 w-1/4 justify-end min-w-[150px]">
         <svg className="w-5 h-5 text-gray-400" fill="currentColor" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
         <input type="range" min="0" max="1" step="0.01" value={volume} onChange={(e) => changeVolume(Number(e.target.value))} className="w-24 h-1 bg-white/10 rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full cursor-pointer accent-white" />
       </div>
+      
     </div>
   );
 };

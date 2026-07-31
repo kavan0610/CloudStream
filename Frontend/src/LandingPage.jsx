@@ -4,52 +4,52 @@
 // import { authApi } from './services/api';
 
 // const LandingPage = () => {
-//   // 1. Changed to track WHICH button is loading
+//   // 1. New State: Set to true ONLY if they have data saved, otherwise false immediately
+//   const [isCheckingAuth, setIsCheckingAuth] = useState(!!localStorage.getItem('user'));
 //   const [loadingType, setLoadingType] = useState(null);
 //   const navigate = useNavigate();
 
 //   useEffect(() => {
-//   const checkAuth = async () => {
-//     const storedUser = localStorage.getItem('user');
+//     const checkAuth = async () => {
+//       const storedUser = localStorage.getItem('user');
 
-//     if (storedUser) {
-//       try {
-//         const userObj = JSON.parse(storedUser);
-        
-//         // 1. Ask the backend for a fresh 1-hour token using their ID
-//         const res = await authApi.refreshToken(userObj.id);
-//         const freshToken = res.data.accessToken;
+//       if (storedUser) {
+//         try {
+//           const userObj = JSON.parse(storedUser);
+          
+//           // Ask the backend for a fresh token
+//           const res = await authApi.refreshToken(userObj.id);
+//           const freshToken = res.data.accessToken;
 
-//         // 2. Save the new token
-//         localStorage.setItem('driveToken', freshToken);
+//           localStorage.setItem('driveToken', freshToken);
 
-//         // 3. Jump to the dashboard with the fresh token so music plays!
-//         navigate('/dashboard', { 
-//           state: { user: userObj, driveToken: freshToken } 
-//         });
-//       } catch (error) {
-//         console.error("Session expired or invalid:", error);
-//         // If the refresh fails (e.g., they revoked access), clear the broken data
-//         localStorage.removeItem('driveToken');
-//         localStorage.removeItem('user');
+//           navigate('/dashboard', { 
+//             state: { user: userObj, driveToken: freshToken } 
+//           });
+//         } catch (error) {
+//           console.error("Session expired or invalid:", error);
+//           localStorage.removeItem('driveToken');
+//           localStorage.removeItem('user');
+//           // 2. Token failed/expired, stop loading and show login buttons
+//           setIsCheckingAuth(false);
+//         }
+//       } else {
+//         // No user found, stop loading immediately
+//         setIsCheckingAuth(false);
 //       }
-//     }
-//   };
+//     };
 
-//   checkAuth();
-// }, [navigate]);
+//     checkAuth();
+//   }, [navigate]);
 
 //   const handleGoogleAuth = useGoogleLogin({
 //     flow: 'auth-code', 
-    
 //     onSuccess: async (codeResponse) => {
-//       setLoadingType('google'); // 2. Set specific loading state
+//       setLoadingType('google'); 
 //       try {
-//         // CLEAN API CALL: No hardcoded URLs!
 //         const res = await authApi.verifyGoogleCode(codeResponse.code);
-        
 //         localStorage.setItem('driveToken', res.data.accessToken);
-//         localStorage.setItem('user', JSON.stringify(res.data.user));
+//         localStorage.setItem('user', JSON.stringify(res.data.user)); 
         
 //         navigate('/dashboard', { 
 //           state: { user: res.data.user, driveToken: res.data.accessToken } 
@@ -57,20 +57,19 @@
 //       } catch (error) {
 //         console.error("Authentication crashed:", error);
 //       } finally {
-//         setLoadingType(null); // 3. Reset state
+//         setLoadingType(null); 
 //       }
 //     },
 //     onError: () => console.log('Google Sign-In Aborted')
 //   });
 
 //   const handleDemoLogin = async () => {
-//     setLoadingType('demo'); // 4. Set specific loading state
+//     setLoadingType('demo'); 
 //     try {
 //       const res = await authApi.loginDemo();
       
-//       // Save the token and jump to the dashboard just like a real login!
 //       localStorage.setItem('driveToken', res.data.accessToken);
-//       localStorage.setItem('user', JSON.stringify(res.data.user));
+//       localStorage.setItem('user', JSON.stringify(res.data.user)); 
       
 //       navigate('/dashboard', { 
 //         state: { user: res.data.user, driveToken: res.data.accessToken } 
@@ -79,14 +78,28 @@
 //       console.error("Demo login crashed:", error);
 //       alert("Demo is currently unavailable. Please try again later.");
 //     } finally {
-//       setLoadingType(null); // 5. Reset state
+//       setLoadingType(null); 
 //     }
 //   };
 
+//   // 3. The Splash Screen: If we are verifying the token, show this instead!
+//   if (isCheckingAuth) {
+//     return (
+//       <div className="min-h-screen bg-[#0B0F19] bg-[radial-gradient(ellipse_at_top,_#1A2235,_#0B0F19)] flex flex-col justify-center items-center">
+//         <div className="flex flex-col items-center animate-pulse">
+//           <img src="/icon.png" alt="Loading" className="w-16 h-16 mb-6 opacity-80" />
+//           <h2 className="text-xl font-display text-white tracking-widest uppercase opacity-80">
+//             Resuming Session
+//           </h2>
+//         </div>
+//       </div>
+//     );
+//   }
+
+//   // --- STANDARD LOGIN UI ---
 //   return (
 //     <div className="relative min-h-screen bg-[#0B0F19] bg-[radial-gradient(ellipse_at_top,_#1A2235,_#0B0F19)] flex flex-col justify-center items-center px-4 sm:px-6 lg:px-8 overflow-hidden">
       
-//       {/* Top Navigation / Branding */}
 //       <div className="absolute top-0 left-0 w-full p-6 md:px-10 flex justify-between items-center z-20">
 //         <div className="flex items-center gap-2.5 md:gap-3 cursor-pointer group">
 //           <img 
@@ -100,7 +113,6 @@
 //         </div>
 //       </div>
 
-//       {/* Main Content Container */}
 //       <div className="max-w-3xl text-center space-y-6 md:space-y-8 z-10 mt-10 md:mt-0">
 //         <div>
 //           <h1 className="font-display text-5xl md:text-7xl font-extrabold tracking-tight text-white mb-4">
@@ -112,10 +124,8 @@
 //           </p>
 //         </div>
 
-//         {/* Action Buttons Group */}
 //         <div className="mt-10 flex flex-col items-center gap-4 pt-6 w-full max-w-xs sm:max-w-sm mx-auto">
           
-//           {/* Primary CTA: Google Auth */}
 //           <button 
 //             onClick={handleGoogleAuth} 
 //             disabled={loadingType !== null}
@@ -130,7 +140,6 @@
 //             {loadingType === 'google' ? "Connecting..." : "Continue with Google"}
 //           </button>
 
-//           {/* Secondary CTA: View Demo */}
 //           <button 
 //             onClick={handleDemoLogin}
 //             disabled={loadingType !== null}
@@ -227,7 +236,6 @@ const LandingPage = () => {
     } catch (error) {
       console.error("Demo login crashed:", error);
       alert("Demo is currently unavailable. Please try again later.");
-    } finally {
       setLoadingType(null); 
     }
   };
@@ -236,11 +244,21 @@ const LandingPage = () => {
   if (isCheckingAuth) {
     return (
       <div className="min-h-screen bg-[#0B0F19] bg-[radial-gradient(ellipse_at_top,_#1A2235,_#0B0F19)] flex flex-col justify-center items-center">
-        <div className="flex flex-col items-center animate-pulse">
-          <img src="/icon.png" alt="Loading" className="w-16 h-16 mb-6 opacity-80" />
-          <h2 className="text-xl font-display text-white tracking-widest uppercase opacity-80">
+        <div className="flex flex-col items-center">
+          <img src="/icon.png" alt="Loading" className="w-16 h-16 mb-6 opacity-80 animate-pulse" />
+          <h2 className="text-xl font-display text-white tracking-widest uppercase opacity-80 animate-pulse">
             Resuming Session
           </h2>
+          
+          {/* NEW: Infrastructure Notice for Splash Screen */}
+          <div className="mt-8 text-center animate-fade-in">
+            <p className="text-sm text-blue-400/90 font-medium animate-pulse">
+              Waking up free backend instance...
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              This may take up to a minute.
+            </p>
+          </div>
         </div>
       </div>
     );
@@ -293,11 +311,23 @@ const LandingPage = () => {
           <button 
             onClick={handleDemoLogin}
             disabled={loadingType !== null}
-            className="w-full px-8 py-4 bg-transparent border-2 border-white/20 hover:border-white/50 hover:bg-white/5 text-white font-bold rounded-full transition-all duration-200 flex items-center justify-center gap-2 group"
+            className="w-full px-8 py-4 bg-transparent border-2 border-white/20 hover:border-white/50 hover:bg-white/5 disabled:opacity-50 text-white font-bold rounded-full transition-all duration-200 flex items-center justify-center gap-2 group"
           >
             {loadingType === 'demo' ? "Loading Demo..." : "View Demo"}
             <span className="group-hover:translate-x-1 transition-transform duration-200">→</span>
           </button>
+
+          {/* NEW: Infrastructure Notice for Button Clicks */}
+          {loadingType !== null && (
+            <div className="mt-4 text-center animate-fade-in">
+              <p className="text-sm text-blue-400/90 font-medium animate-pulse">
+                Waking up free backend instance...
+              </p>
+              <p className="text-xs text-gray-500 mt-1">
+                This may take up to a minute.
+              </p>
+            </div>
+          )}
 
         </div>
       </div>
