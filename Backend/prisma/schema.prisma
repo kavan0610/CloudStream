@@ -16,6 +16,7 @@ model User {
   driveFolderId String?
   tracks        Track[]
   refreshToken  String?
+  syncToken     String?
   playlists     Playlist[] // <-- Add this relationship
 }
 
