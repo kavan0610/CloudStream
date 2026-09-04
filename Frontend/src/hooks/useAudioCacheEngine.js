@@ -1,39 +1,39 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 
-export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex, repeatMode) => {
-  
-  // GAPLESS PLAYBACK PRELOADER (SLIDING WINDOW)
-  useEffect(() => {
-    if (!driveToken || currentIndex < 0 || queue.length === 0) return;
+export const useAudioCacheEngine = (audioCache, getValidToken, queue, currentIndex, repeatMode) => {
+  const abortControllers = useRef({});
 
-    const CACHE_WINDOW_NEXT = 2; 
-    const CACHE_WINDOW_PREV = 2; 
+  const getActiveWindowIds = useCallback(() => {
+    if (currentIndex < 0 || queue.length === 0) return [];
     
-    const currentTrack = queue[currentIndex];
-    const tracksToKeepReady = [];
-
-    for (let i = 1; i <= CACHE_WINDOW_NEXT; i++) {
+    const ids = new Set([queue[currentIndex]?.id]);
+    
+    for (let i = 1; i <= 2; i++) {
       let nextIdx = currentIndex + i;
-      if (nextIdx >= queue.length) {
-        if (repeatMode === 'all') nextIdx = nextIdx % queue.length;
-        else break;
-      }
-      if (queue[nextIdx]) tracksToKeepReady.push(queue[nextIdx]);
-    }
+      if (nextIdx >= queue.length && repeatMode === 'all') nextIdx = nextIdx % queue.length;
+      if (queue[nextIdx]) ids.add(queue[nextIdx].id);
 
-    for (let i = 1; i <= CACHE_WINDOW_PREV; i++) {
       let prevIdx = currentIndex - i;
-      if (prevIdx < 0) {
-        if (repeatMode === 'all') prevIdx = (queue.length + prevIdx) % queue.length;
-        else break;
-      }
-      if (queue[prevIdx]) tracksToKeepReady.push(queue[prevIdx]);
+      if (prevIdx < 0 && repeatMode === 'all') prevIdx = (queue.length + prevIdx) % queue.length;
+      if (queue[prevIdx]) ids.add(queue[prevIdx].id);
     }
+    
+    return Array.from(ids).filter(Boolean);
+  }, [currentIndex, queue, repeatMode]);
 
-    const keepIds = [currentTrack?.id, ...tracksToKeepReady.map(t => t.id)].filter(Boolean);
+  // GAPLESS PRELOADER
+  useEffect(() => {
+    if (currentIndex < 0 || queue.length === 0) return;
 
+    const keepIds = getActiveWindowIds();
+
+    // Clean up memory and abort network requests for old tracks
     Object.keys(audioCache.current).forEach(id => {
       if (!keepIds.includes(id)) {
+        if (abortControllers.current[id]) {
+          abortControllers.current[id].abort();
+          delete abortControllers.current[id];
+        }
         if (audioCache.current[id] && audioCache.current[id] !== 'downloading') {
           URL.revokeObjectURL(audioCache.current[id]); 
         }
@@ -41,60 +41,106 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
       }
     });
 
-    tracksToKeepReady.forEach(track => {
-      if (!audioCache.current[track.id]) {
-        audioCache.current[track.id] = 'downloading'; 
+    // Download next tracks
+    keepIds.forEach(async (id) => {
+      if (!audioCache.current[id]) {
+        const track = queue.find(t => t.id === id);
+        if (!track) return;
+
+        audioCache.current[id] = 'downloading'; 
+        const controller = new AbortController();
+        abortControllers.current[id] = controller;
+        
+        const currentToken = await getValidToken();
+        if (!currentToken) return;
         
         fetch(`https://www.googleapis.com/drive/v3/files/${track.driveFileId}?alt=media`, {
-          headers: { Authorization: `Bearer ${driveToken}` }
+          headers: { Authorization: `Bearer ${currentToken}` },
+          signal: controller.signal
         })
         .then(res => res.ok ? res.blob() : Promise.reject('Failed'))
         .then(blob => {
-          if (audioCache.current[track.id] === 'downloading') {
-            audioCache.current[track.id] = URL.createObjectURL(blob);
+          if (audioCache.current[id] === 'downloading') {
+            audioCache.current[id] = URL.createObjectURL(blob);
+          } else {
+            const tempUrl = URL.createObjectURL(blob);
+            URL.revokeObjectURL(tempUrl);
           }
+          delete abortControllers.current[id];
         })
-        .catch(() => {
-          if (audioCache.current[track.id] === 'downloading') {
-            delete audioCache.current[track.id];
+        .catch((err) => {
+          if (err.name !== 'AbortError' && audioCache.current[id] === 'downloading') {
+            delete audioCache.current[id];
           }
+          delete abortControllers.current[id];
         });
       }
     });
-  }, [currentIndex, queue, driveToken, repeatMode, audioCache]);
+  }, [currentIndex, queue, getActiveWindowIds, audioCache, getValidToken]);
 
-  // SPECULATIVE UI PRELOADER
-  const preloadContext = useCallback((originalQueue = [], shuffledQueue = []) => {
-    if (!originalQueue || originalQueue.length === 0 || !driveToken) return;
+  // SPECULATIVE PRELOADER
+  const preloadContext = useCallback(async (originalQueue = [], shuffledQueue = []) => {
+    if (!originalQueue || originalQueue.length === 0) return;
 
-    // Pick the first 2 from normal queue and first 2 from shuffle queue
     const tracksToPreload = [
       originalQueue[0], originalQueue[1],
       shuffledQueue[0], shuffledQueue[1]
     ].filter(Boolean);
 
-    // Deduplicate (in case the randomly shuffled top 2 are also the actual top 2)
-    // and filter out ones we've already cached
     const uniqueTracks = tracksToPreload.filter((t, index, self) => 
       self.findIndex(s => s.id === t.id) === index && !audioCache.current[t.id]
     );
 
+    if (uniqueTracks.length === 0) return;
+
+    const activeIds = getActiveWindowIds();
+    const currentCacheKeys = Object.keys(audioCache.current);
+    
+    if (currentCacheKeys.length >= 6) {
+      const speculativeKeys = currentCacheKeys.filter(key => !activeIds.includes(key));
+      
+      speculativeKeys.forEach(id => {
+        if (abortControllers.current[id]) {
+          abortControllers.current[id].abort();
+          delete abortControllers.current[id];
+        }
+        if (audioCache.current[id] && audioCache.current[id] !== 'downloading') {
+          URL.revokeObjectURL(audioCache.current[id]); 
+        }
+        delete audioCache.current[id];
+      });
+    }
+
+    const currentToken = await getValidToken();
+    if (!currentToken) return;
+
     uniqueTracks.forEach(track => {
       audioCache.current[track.id] = 'downloading'; 
+      const controller = new AbortController();
+      abortControllers.current[track.id] = controller;
+
       fetch(`https://www.googleapis.com/drive/v3/files/${track.driveFileId}?alt=media`, {
-        headers: { Authorization: `Bearer ${driveToken}` }
+        headers: { Authorization: `Bearer ${currentToken}` },
+        signal: controller.signal
       })
       .then(res => res.ok ? res.blob() : Promise.reject('Failed'))
       .then(blob => {
-        if (audioCache.current[track.id] === 'downloading') {
-          audioCache.current[track.id] = URL.createObjectURL(blob);
+        if (audioCache.current[id] === 'downloading') {
+          audioCache.current[id] = URL.createObjectURL(blob);
+        } else {
+          const tempUrl = URL.createObjectURL(blob);
+          URL.revokeObjectURL(tempUrl);
         }
+        delete abortControllers.current[id];
       })
-      .catch(() => {
-        if (audioCache.current[track.id] === 'downloading') delete audioCache.current[track.id];
+      .catch((err) => {
+        if (err.name !== 'AbortError' && audioCache.current[track.id] === 'downloading') {
+            delete audioCache.current[track.id];
+        }
+        delete abortControllers.current[track.id];
       });
     });
-  }, [driveToken, audioCache]);
+  }, [audioCache, getActiveWindowIds, getValidToken]);
 
   return { preloadContext };
 };
