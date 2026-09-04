@@ -2,18 +2,18 @@ import { useEffect, useCallback } from 'react';
 
 export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex, repeatMode) => {
   
-  // GAPLESS PLAYBACK PRELOADER (SLIDING WINDOW)
-  useEffect(() => {
-    if (!driveToken || currentIndex < 0 || queue.length === 0) return;
+  // THE ROBUST FIX: Extract your exact sliding window logic into a callable function
+  const updateWindow = useCallback((targetIndex) => {
+    if (!driveToken || targetIndex < 0 || queue.length === 0) return;
 
     const CACHE_WINDOW_NEXT = 2; 
     const CACHE_WINDOW_PREV = 2; 
     
-    const currentTrack = queue[currentIndex];
+    const currentTrack = queue[targetIndex];
     const tracksToKeepReady = [];
 
     for (let i = 1; i <= CACHE_WINDOW_NEXT; i++) {
-      let nextIdx = currentIndex + i;
+      let nextIdx = targetIndex + i;
       if (nextIdx >= queue.length) {
         if (repeatMode === 'all') nextIdx = nextIdx % queue.length;
         else break;
@@ -22,7 +22,7 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
     }
 
     for (let i = 1; i <= CACHE_WINDOW_PREV; i++) {
-      let prevIdx = currentIndex - i;
+      let prevIdx = targetIndex - i;
       if (prevIdx < 0) {
         if (repeatMode === 'all') prevIdx = (queue.length + prevIdx) % queue.length;
         else break;
@@ -61,20 +61,21 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
         });
       }
     });
-  }, [currentIndex, queue, driveToken, repeatMode, audioCache]);
+  }, [queue, driveToken, repeatMode, audioCache]);
 
-  // SPECULATIVE UI PRELOADER
+  // Keep it synced with React when the app is active
+  useEffect(() => {
+    updateWindow(currentIndex);
+  }, [currentIndex, updateWindow]);
+
   const preloadContext = useCallback((originalQueue = [], shuffledQueue = []) => {
     if (!originalQueue || originalQueue.length === 0 || !driveToken) return;
 
-    // Pick the first 2 from normal queue and first 2 from shuffle queue
     const tracksToPreload = [
       originalQueue[0], originalQueue[1],
       shuffledQueue[0], shuffledQueue[1]
     ].filter(Boolean);
 
-    // Deduplicate (in case the randomly shuffled top 2 are also the actual top 2)
-    // and filter out ones we've already cached
     const uniqueTracks = tracksToPreload.filter((t, index, self) => 
       self.findIndex(s => s.id === t.id) === index && !audioCache.current[t.id]
     );
@@ -96,5 +97,6 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
     });
   }, [driveToken, audioCache]);
 
-  return { preloadContext };
+  // EXPORT updateWindow so AudioContext can trigger it manually
+  return { preloadContext, updateWindow }; 
 };

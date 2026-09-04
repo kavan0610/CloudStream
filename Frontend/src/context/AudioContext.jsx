@@ -30,27 +30,29 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
     toggleRepeat, syncActiveContext 
   } = useAudioQueue(audioCache);
 
-  const { preloadContext } = useAudioCacheEngine(
+  const { preloadContext, updateWindow } = useAudioCacheEngine(
     audioCache, driveToken, queue, currentIndex, repeatMode
   );
 
+  const currentLoadedTrackIdRef = useRef(null);
+
   const playTrackUrl = useCallback(async (track) => {
     if (!track || !driveToken || driveToken === 'undefined') return;
+
+    // FIX 1: The Double-Trigger Lock (Stops the split-second crash)
+    if (currentLoadedTrackIdRef.current === track.id) return;
+    currentLoadedTrackIdRef.current = track.id;
 
     CacheEngine.incrementPlayCount(track.driveFileId);
     if (track.isFavourite || track.isFavorite) CacheEngine.cacheTrack(track, driveToken);
 
     try {
-      if (audioRef.current) audioRef.current.pause();
-      setProgress(0);
-      setDuration(0);
-      setIsPlaying(false);
-
       if (abortControllerRef.current) abortControllerRef.current.abort();
       abortControllerRef.current = new AbortController();
 
       let localUrl = audioCache.current[track.id];
 
+      // FIX 2: Delayed Pause (Maintains OS background audio lock)
       if (!localUrl || localUrl === 'downloading') {
         let response = await CacheEngine.getCachedTrack(track.driveFileId);
         if (!response) {
@@ -68,13 +70,28 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
         audioCache.current[track.id] = localUrl; 
       }
 
+      if (audioRef.current) audioRef.current.pause();
+      setProgress(0);
+      setDuration(0);
+      setIsPlaying(false);
+
       audioRef.current.src = localUrl;
       await audioRef.current.play();
       setIsPlaying(true);
+
+      // THE ROBUST 5-SONG WINDOW FIX: Call your exact cache logic directly
+      const trackIdx = queue.findIndex(t => t.id === track.id);
+      if (trackIdx !== -1) {
+        updateWindow(trackIdx);
+      }
+
     } catch (e) {
-      if (e.name !== 'AbortError') console.error("Playback failed:", e);
+      if (e.name !== 'AbortError') {
+        console.error("Playback failed:", e);
+        currentLoadedTrackIdRef.current = null; // Release the lock on real failure
+      }
     }
-  }, [driveToken, audioCache]);
+  }, [driveToken, audioCache, queue, updateWindow]);
 
 
   // --- UI Controls (Updated for Background Resilience) ---
