@@ -1,10 +1,10 @@
 // src/context/AudioContext.jsx
 import React, { createContext, useContext, useState, useRef, useEffect, useCallback } from 'react';
 import { CacheEngine } from "../utils/CacheEngine";
-import { useTokenHeartbeat } from '../hooks/useTokenHeartbeat';
 import { useAudioQueue } from '../hooks/useAudioQueue';
 import { useAudioCacheEngine } from '../hooks/useAudioCacheEngine';
 import { useMediaSession } from '../hooks/useMediaSession';
+import { authApi } from '../services/api';
 
 const AudioContext = createContext();
 export const useAudio = () => useContext(AudioContext);
@@ -19,10 +19,55 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
   const abortControllerRef = useRef(null);
   const audioCache = useRef({}); 
   
-  // THE FIX: This tracks if we manually started the next song to bypass React's delay
+  // Tracks if we manually started the next song to bypass React's delay
   const isImperativePlayRef = useRef(false);
 
-  useTokenHeartbeat(userId, onTokenRefresh);
+  // ==========================================
+  // JUST-IN-TIME BACKGROUND TOKEN REFRESH
+  // ==========================================
+  const lastTokenRefresh = useRef(Date.now() - (40 * 60 * 1000));
+  const tokenRefreshPromiseRef = useRef(null);
+
+  const getValidToken = useCallback(async () => {
+    const timeSinceLastRefresh = Date.now() - lastTokenRefresh.current;
+    const FORTY_FIVE_MINUTES = 45 * 60 * 1000;
+
+    if (timeSinceLastRefresh > FORTY_FIVE_MINUTES) {
+      // THE FIX: If a refresh is already in flight, wait for it. Do not fire another.
+      if (tokenRefreshPromiseRef.current) {
+        return await tokenRefreshPromiseRef.current;
+      }
+
+      try {
+        console.log("🔄 Auth: Triggering Just-In-Time background refresh...");
+        // Lock it!
+        tokenRefreshPromiseRef.current = authApi.refreshToken(userId);
+        const response = await tokenRefreshPromiseRef.current;
+        const newToken = response.data.accessToken;
+        
+        localStorage.setItem('driveToken', newToken);
+        if (onTokenRefresh) onTokenRefresh(newToken);
+        
+        lastTokenRefresh.current = Date.now();
+        tokenRefreshPromiseRef.current = null; // Unlock
+        return newToken;  
+      } catch (error) {
+        console.error("Background token refresh failed.", error);
+        tokenRefreshPromiseRef.current = null;
+        
+        // If the backend says the token was revoked by Google, log the user out!
+        if (error.response?.status === 401 && error.response?.data?.error === 'TOKEN_REVOKED') {
+          console.error("User needs to re-authenticate.");
+          localStorage.removeItem('driveToken');
+          // Call your logout function here, or redirect to login screen
+          window.location.href = '/login'; 
+        }
+        
+        return driveToken; 
+      }
+    }
+    return driveToken;
+  }, [userId, driveToken, onTokenRefresh]);
 
   const { 
     queue, currentIndex, setCurrentIndex, isShuffled, repeatMode, 
@@ -30,54 +75,81 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
     toggleRepeat, syncActiveContext 
   } = useAudioQueue(audioCache);
 
+  // Pass getValidToken INSTEAD of driveToken to the cache engine
   const { preloadContext } = useAudioCacheEngine(
-    audioCache, driveToken, queue, currentIndex, repeatMode
+    audioCache, getValidToken, queue, currentIndex, repeatMode
   );
 
   const playTrackUrl = useCallback(async (track) => {
-    if (!track || !driveToken || driveToken === 'undefined') return;
+    if (!track) return;
 
-    CacheEngine.incrementPlayCount(track.driveFileId);
-    if (track.isFavourite || track.isFavorite) CacheEngine.cacheTrack(track, driveToken);
+    // THE FIX: Lock this specific run to its own abort controller
+    const currentAbortController = new AbortController();
+    if (abortControllerRef.current) abortControllerRef.current.abort();
+    abortControllerRef.current = currentAbortController;
 
     try {
+      let localUrl = audioCache.current[track.id];
+
+      // --- FAST PATH: Cache Hit ---
+      if (localUrl && localUrl !== 'downloading') {
+        if (audioRef.current) audioRef.current.pause();
+        setProgress(0);
+        setDuration(0);
+        setIsPlaying(false);
+
+        audioRef.current.src = localUrl;
+        await audioRef.current.play();
+        setIsPlaying(true);
+        
+        CacheEngine.incrementPlayCount(track.driveFileId);
+        return; 
+      }
+
+      // --- SLOW PATH: Cache Miss ---
+      const currentToken = await getValidToken();
+      
+      // THE FIX: Check if the user clicked "Next" while we were waiting for the token!
+      if (currentAbortController.signal.aborted) return;
+      
+      if (!currentToken || currentToken === 'undefined') return;
+
+      CacheEngine.incrementPlayCount(track.driveFileId);
+      if (track.isFavourite || track.isFavorite) {
+        CacheEngine.cacheTrack(track, currentToken);
+      }
+
+      let response = await CacheEngine.getCachedTrack(track.driveFileId);
+      if (!response) {
+        response = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${track.driveFileId}?alt=media`, 
+          {
+            headers: { Authorization: `Bearer ${currentToken}` },
+            signal: currentAbortController.signal // Use the locally scoped signal
+          }
+        );
+        if (!response.ok) throw new Error("Google Drive API Error");
+      }
+      
+      const blob = await response.blob();
+      localUrl = URL.createObjectURL(blob);
+      audioCache.current[track.id] = localUrl; 
+
       if (audioRef.current) audioRef.current.pause();
       setProgress(0);
       setDuration(0);
       setIsPlaying(false);
 
-      if (abortControllerRef.current) abortControllerRef.current.abort();
-      abortControllerRef.current = new AbortController();
-
-      let localUrl = audioCache.current[track.id];
-
-      if (!localUrl || localUrl === 'downloading') {
-        let response = await CacheEngine.getCachedTrack(track.driveFileId);
-        if (!response) {
-          response = await fetch(
-            `https://www.googleapis.com/drive/v3/files/${track.driveFileId}?alt=media`, 
-            {
-              headers: { Authorization: `Bearer ${driveToken}` },
-              signal: abortControllerRef.current.signal
-            }
-          );
-          if (!response.ok) throw new Error("Google Drive API Error");
-        }
-        const blob = await response.blob();
-        localUrl = URL.createObjectURL(blob);
-        audioCache.current[track.id] = localUrl; 
-      }
-
       audioRef.current.src = localUrl;
       await audioRef.current.play();
       setIsPlaying(true);
+
     } catch (e) {
       if (e.name !== 'AbortError') console.error("Playback failed:", e);
     }
-  }, [driveToken, audioCache]);
+  }, [getValidToken, audioCache]);
 
-
-  // --- UI Controls (Updated for Background Resilience) ---
+  // --- UI Controls ---
   const togglePlay = useCallback(() => {
     if (!currentTrack) return;
     if (audioRef.current.paused) audioRef.current.play();
