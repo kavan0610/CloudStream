@@ -74,39 +74,26 @@ const refreshGoogleToken = async (req, res) => {
   const { userId } = req.body;
 
   try {
+    // 1. Find the user and their permanent refresh token
     const user = await prisma.user.findUnique({ where: { id: userId } });
 
     if (!user || !user.refreshToken) {
       return res.status(400).json({ error: "No refresh token found for this user." });
     }
 
+    // 2. Ask Google for a brand new Access Token
     const response = await axios.post('https://oauth2.googleapis.com/token', {
-      client_id: process.env.GOOGLE_CLIENT_ID,
-      client_secret: process.env.GOOGLE_CLIENT_SECRET,
+      client_id: process.env.GOOGLE_CLIENT_ID,         // Ensure these are in your .env
+      client_secret: process.env.GOOGLE_CLIENT_SECRET, // Ensure these are in your .env
       refresh_token: user.refreshToken,
       grant_type: 'refresh_token'
     });
 
-    res.status(200).json({ accessToken: response.data.access_token });
-    
+    const newAccessToken = response.data.access_token;
+
+    // 3. Send the new token back to the frontend
+    res.status(200).json({ accessToken: newAccessToken });
   } catch (error) {
-    // Check if Google explicitly rejected the refresh token
-    if (error.response && error.response.data && error.response.data.error === 'invalid_grant') {
-      console.warn(`Refresh token revoked for user ${userId}. Prompting re-login.`);
-      
-      // Optional: Clear the invalid token from your database
-      await prisma.user.update({
-        where: { id: userId },
-        data: { refreshToken: null } 
-      });
-
-      // Send a specific 401 status so the frontend knows to log them out
-      return res.status(401).json({ 
-        error: 'TOKEN_REVOKED', 
-        message: 'Google session expired. Please log in again.' 
-      });
-    }
-
     console.error("Failed to refresh token:", error.response?.data || error.message);
     res.status(500).json({ error: "Failed to refresh token" });
   }
