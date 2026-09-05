@@ -19,7 +19,6 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
   const abortControllerRef = useRef(null);
   const audioCache = useRef({}); 
   
-  // THE FIX: This tracks if we manually started the next song to bypass React's delay
   const isImperativePlayRef = useRef(false);
 
   useTokenHeartbeat(userId, onTokenRefresh);
@@ -70,14 +69,14 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
         audioCache.current[track.id] = localUrl; 
       }
 
-      if (audioRef.current) audioRef.current.pause();
-      setProgress(0);
-      setDuration(0);
-      setIsPlaying(false);
-
       audioRef.current.src = localUrl;
-      await audioRef.current.play();
-      setIsPlaying(true);
+      
+      const playPromise = audioRef.current.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(e => {
+          if (e.name !== 'AbortError') console.error("Playback interrupted:", e);
+        });
+      }
 
       // THE ROBUST 5-SONG WINDOW FIX: Call your exact cache logic directly
       const trackIdx = queue.findIndex(t => t.id === track.id);
@@ -217,6 +216,18 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
   const seek = (time) => {
     audioRef.current.currentTime = time;
     setProgress(time);
+    
+    if ('mediaSession' in navigator && duration > 0) {
+      try {
+        navigator.mediaSession.setPositionState({
+          duration: duration,
+          playbackRate: isPlaying ? 1 : 0,
+          position: time
+        });
+      } catch (e) {
+        console.warn("Could not sync seek position with OS:", e);
+      }
+    }
   };
 
   const changeVolume = (newVolume) => {
