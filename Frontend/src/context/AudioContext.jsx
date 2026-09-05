@@ -134,19 +134,34 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
     }
   }, [currentIndex, queue, repeatMode, setCurrentIndex, playTrackUrl]);
 
-  // Handle Track Endings
+  // ==========================================
+  // THE FIX: SHADOW STATE FOR DOZE MODE
+  // ==========================================
+  const latestStateRef = useRef({ currentIndex, queue, repeatMode });
+  
+  useEffect(() => {
+    latestStateRef.current = { currentIndex, queue, repeatMode };
+  }, [currentIndex, queue, repeatMode]);
+
+  // Handle Track Endings (Bypassing asleep React state)
   useEffect(() => {
     const audio = audioRef.current;
     
     const handleEnded = () => {
+      // Read strictly from the Ref, not the React state variables
+      const { currentIndex: cIdx, queue: q, repeatMode: rm } = latestStateRef.current;
+      
       let nextIndex = -1;
-      if (currentIndex < queue.length - 1) nextIndex = currentIndex + 1;
-      else if (repeatMode === 'all') nextIndex = 0;
+      if (cIdx < q.length - 1) nextIndex = cIdx + 1;
+      else if (rm === 'all') nextIndex = 0;
 
       if (nextIndex !== -1) {
+        // Manually push the shadow index forward so the next song knows where it is
+        latestStateRef.current.currentIndex = nextIndex;
+        
         isImperativePlayRef.current = true;
-        setCurrentIndex(nextIndex);
-        playTrackUrl(queue[nextIndex]);
+        setCurrentIndex(nextIndex); 
+        playTrackUrl(q[nextIndex]);
       } else {
         setIsPlaying(false);
       }
@@ -154,7 +169,8 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
 
     audio.addEventListener('ended', handleEnded);
     return () => audio.removeEventListener('ended', handleEnded);
-  }, [currentIndex, queue, repeatMode, setCurrentIndex, playTrackUrl]);
+  }, [playTrackUrl, setCurrentIndex]); // NO currentIndex, queue, or repeatMode here!
+
 
   // Handle HTML5 Events
   useEffect(() => {
