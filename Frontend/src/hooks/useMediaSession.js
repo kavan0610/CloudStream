@@ -48,4 +48,12 @@ export const useMediaSession = (currentTrack, isPlaying, togglePlay, handlePrev,
       }
     }
   }, [duration, isPlaying]); 
+
+  // 3. Playback State (tells the OS this tab is actively playing — keeps Chrome
+  // from throttling/freezing it in the background)
+  useEffect(() => {
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+    }
+  }, [isPlaying]);
 };

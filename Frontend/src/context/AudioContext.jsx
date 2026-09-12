@@ -85,11 +85,15 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
       }
 
     } catch (e) {
-      if (e.name !== 'AbortError') {
-        console.error("Playback failed:", e);
-        currentLoadedTrackIdRef.current = null; // Release the lock on real failure
-      }
+    if (e.name !== 'AbortError') {
+      console.error("Playback failed:", e);
     }
+    // Release the lock as long as nothing newer has claimed it —
+    // this is what lets a track retry after the OS kills a background fetch.
+    if (currentLoadedTrackIdRef.current === track.id) {
+      currentLoadedTrackIdRef.current = null;
+    }
+  }
   }, [driveToken, audioCache, queue, updateWindow]);
 
 

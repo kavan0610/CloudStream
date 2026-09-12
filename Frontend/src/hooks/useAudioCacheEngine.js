@@ -41,26 +41,39 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
       }
     });
 
-    tracksToKeepReady.forEach(track => {
-      if (!audioCache.current[track.id]) {
-        audioCache.current[track.id] = 'downloading'; 
-        
-        fetch(`https://www.googleapis.com/drive/v3/files/${track.driveFileId}?alt=media`, {
-          headers: { Authorization: `Bearer ${driveToken}` }
-        })
-        .then(res => res.ok ? res.blob() : Promise.reject('Failed'))
-        .then(blob => {
-          if (audioCache.current[track.id] === 'downloading') {
-            audioCache.current[track.id] = URL.createObjectURL(blob);
-          }
-        })
-        .catch(() => {
-          if (audioCache.current[track.id] === 'downloading') {
-            delete audioCache.current[track.id];
-          }
-        });
+    const fetchTrackWithRetry = (track, attempt = 1) => {
+    const MAX_ATTEMPTS = 3;
+    const BACKOFF_MS = 1000; // 1s, 2s, 4s
+
+    fetch(`https://www.googleapis.com/drive/v3/files/${track.driveFileId}?alt=media`, {
+      headers: { Authorization: `Bearer ${driveToken}` }
+    })
+    .then(res => res.ok ? res.blob() : Promise.reject('Failed'))
+    .then(blob => {
+      if (audioCache.current[track.id] === 'downloading') {
+        audioCache.current[track.id] = URL.createObjectURL(blob);
+      }
+    })
+    .catch(() => {
+      // Only retry if something newer hasn't already claimed/cleared this slot
+      if (audioCache.current[track.id] !== 'downloading') return;
+
+      if (attempt < MAX_ATTEMPTS) {
+        setTimeout(() => {
+          fetchTrackWithRetry(track, attempt + 1);
+        }, BACKOFF_MS * attempt);
+      } else {
+        delete audioCache.current[track.id];
       }
     });
+  };
+
+  tracksToKeepReady.forEach(track => {
+    if (!audioCache.current[track.id]) {
+      audioCache.current[track.id] = 'downloading';
+      fetchTrackWithRetry(track);
+    }
+  });
   }, [queue, driveToken, repeatMode, audioCache]);
 
   // Keep it synced with React when the app is active
