@@ -1,13 +1,16 @@
 // src/hooks/useMediaSession.js
 import { useEffect } from 'react';
 
+const dbg = (...args) => console.log('%c[MEDIASESSION]', 'color:#f0a;font-weight:bold', ...args);
+
 export const useMediaSession = (currentTrack, isPlaying, togglePlay, handlePrev, handleNext, seek, duration, progress) => {
-  
+
   // 1. Metadata & Hardware Buttons
   useEffect(() => {
     if ('mediaSession' in navigator) {
       
       if (currentTrack) {
+        dbg('metadata set for', currentTrack.title, currentTrack.id);
         navigator.mediaSession.metadata = new window.MediaMetadata({
           title: currentTrack.title,
           artist: currentTrack.artist || 'Unknown Artist',
@@ -18,15 +21,30 @@ export const useMediaSession = (currentTrack, isPlaying, togglePlay, handlePrev,
             { src: '/icon.png', sizes: '512x512', type: 'image/png' }
           ]
         });
+      } else {
+        dbg('metadata effect ran but currentTrack is null');
       }
 
-      navigator.mediaSession.setActionHandler('play', () => { if (!isPlaying) togglePlay(); });
-      navigator.mediaSession.setActionHandler('pause', () => { if (isPlaying) togglePlay(); });
-      navigator.mediaSession.setActionHandler('previoustrack', handlePrev);
-      navigator.mediaSession.setActionHandler('nexttrack', handleNext);
+      navigator.mediaSession.setActionHandler('play', () => {
+        dbg('OS action: play pressed, isPlaying=', isPlaying);
+        if (!isPlaying) togglePlay();
+      });
+      navigator.mediaSession.setActionHandler('pause', () => {
+        dbg('OS action: pause pressed, isPlaying=', isPlaying);
+        if (isPlaying) togglePlay();
+      });
+      navigator.mediaSession.setActionHandler('previoustrack', () => {
+        dbg('OS action: previoustrack pressed');
+        handlePrev();
+      });
+      navigator.mediaSession.setActionHandler('nexttrack', () => {
+        dbg('OS action: nexttrack pressed');
+        handleNext();
+      });
       
       // Allow the user to drag the timeline on the lock screen
       navigator.mediaSession.setActionHandler('seekto', (details) => {
+        dbg('OS action: seekto', details.seekTime);
         if (details.seekTime !== undefined) {
           seek(details.seekTime);
         }
@@ -44,6 +62,7 @@ export const useMediaSession = (currentTrack, isPlaying, togglePlay, handlePrev,
           position: progress
         });
       } catch (e) {
+        dbg('setPositionState THREW', e.message);
         console.warn("Could not set media position:", e);
       }
     }
@@ -54,6 +73,7 @@ export const useMediaSession = (currentTrack, isPlaying, togglePlay, handlePrev,
   useEffect(() => {
     if ('mediaSession' in navigator) {
       navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+      dbg('playbackState set to', navigator.mediaSession.playbackState, 'isPlaying=', isPlaying);
     }
   }, [isPlaying]);
 };
