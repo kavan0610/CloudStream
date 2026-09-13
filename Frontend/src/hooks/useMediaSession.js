@@ -1,7 +1,9 @@
 // src/hooks/useMediaSession.js
 import { useEffect } from 'react';
 
-const dbg = (...args) => console.log('%c[MEDIASESSION]', 'color:#f0a;font-weight:bold', ...args);
+import { debugLog } from '../utils/debugOverlay';
+
+const dbg = (...args) => debugLog('MEDIASESSION', ...args);
 
 export const useMediaSession = (currentTrack, isPlaying, togglePlay, handlePrev, handleNext, seek, duration, progress) => {
 

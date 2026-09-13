@@ -1,6 +1,8 @@
 import { useEffect, useCallback } from 'react';
 
-const dbg = (...args) => console.log('%c[CACHE]', 'color:#fa0;font-weight:bold', ...args);
+import { debugLog } from '../utils/debugOverlay';
+
+const dbg = (...args) => debugLog('MEDIASESSION', ...args);
 
 export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex, repeatMode) => {
 

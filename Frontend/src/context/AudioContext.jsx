@@ -6,7 +6,9 @@ import { useAudioQueue } from '../hooks/useAudioQueue';
 import { useAudioCacheEngine } from '../hooks/useAudioCacheEngine';
 import { useMediaSession } from '../hooks/useMediaSession';
 
-const dbg = (...args) => console.log('%c[AUDIO]', 'color:#0af;font-weight:bold', ...args);
+import { debugLog } from '../utils/debugOverlay';
+
+const dbg = (...args) => debugLog('AUDIO', ...args);
 
 const AudioContext = createContext();
 export const useAudio = () => useContext(AudioContext);
@@ -294,7 +296,7 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
     }
   }, [repeatMode]);
 
-  const seek = (time) => {
+  const seek = useCallback((time) => {
     audioRef.current.currentTime = time;
     setProgress(time);
     
@@ -309,12 +311,12 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
         console.warn("Could not sync seek position with OS:", e);
       }
     }
-  };
+  }, [duration, isPlaying]);
 
-  const changeVolume = (newVolume) => {
+  const changeVolume = useCallback((newVolume) => {
     audioRef.current.volume = newVolume;
     setVolume(newVolume);
-  };
+  }, []);
 
   useMediaSession(currentTrack, isPlaying, togglePlay, handlePrev, handleNext, seek, duration, progress);
 
