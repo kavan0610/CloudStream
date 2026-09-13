@@ -5,7 +5,6 @@ import { useTokenHeartbeat } from '../hooks/useTokenHeartbeat';
 import { useAudioQueue } from '../hooks/useAudioQueue';
 import { useAudioCacheEngine } from '../hooks/useAudioCacheEngine';
 import { useMediaSession } from '../hooks/useMediaSession';
-
 import { debugLog } from '../utils/debugOverlay';
 
 const dbg = (...args) => debugLog('AUDIO', ...args);
@@ -24,6 +23,7 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
   const audioCache = useRef({}); 
   
   const isImperativePlayRef = useRef(false);
+  const intentionalPauseRef = useRef(false); // true only when WE call .pause() ourselves
 
   useTokenHeartbeat(userId, onTokenRefresh);
 
@@ -47,7 +47,6 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
 
     dbg('playTrackUrl: called for', track.id, track.title);
 
-    // FIX 1: The Double-Trigger Lock (Stops the split-second crash)
     if (currentLoadedTrackIdRef.current === track.id) {
       dbg('playTrackUrl: BLOCKED by lock, already loaded', track.id);
       return;
@@ -68,7 +67,6 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
       let localUrl = audioCache.current[track.id];
       dbg('playTrackUrl: cache state for', track.id, '=', localUrl);
 
-      // FIX 2: Delayed Pause (Maintains OS background audio lock)
       if (!localUrl || localUrl === 'downloading') {
         dbg('playTrackUrl: no usable cached blob, fetching from Drive API', track.id);
         let response = await CacheEngine.getCachedTrack(track.driveFileId);
@@ -116,7 +114,6 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
           });
       }
 
-      // THE ROBUST 5-SONG WINDOW FIX: Call your exact cache logic directly
       const trackIdx = queue.findIndex(t => t.id === track.id);
       if (trackIdx !== -1) {
         dbg('playTrackUrl: calling updateWindow for index', trackIdx);
@@ -128,7 +125,6 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
       if (e.name !== 'AbortError') {
         console.error("Playback failed:", e);
       }
-      // Release the lock as long as nothing newer has claimed it
       if (currentLoadedTrackIdRef.current === track.id) {
         dbg('playTrackUrl: releasing lock for', track.id);
         currentLoadedTrackIdRef.current = null;
@@ -137,12 +133,16 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
   }, [driveToken, audioCache, queue, updateWindow]);
 
 
-  // --- UI Controls (Updated for Background Resilience) ---
+  // --- UI Controls ---
   const togglePlay = useCallback(() => {
     if (!currentTrack) return;
     dbg('togglePlay called, audio.paused=', audioRef.current.paused);
-    if (audioRef.current.paused) audioRef.current.play();
-    else audioRef.current.pause();
+    if (audioRef.current.paused) {
+      audioRef.current.play();
+    } else {
+      intentionalPauseRef.current = true; // mark this as OUR pause, not phantom
+      audioRef.current.pause();
+    }
   }, [currentTrack]);
 
   const handleNext = useCallback(() => {
@@ -180,16 +180,12 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
     }
   }, [currentIndex, queue, repeatMode, setCurrentIndex, playTrackUrl]);
 
-  // ==========================================
-  // THE FIX: SHADOW STATE FOR DOZE MODE
-  // ==========================================
   const latestStateRef = useRef({ currentIndex, queue, repeatMode });
   
   useEffect(() => {
     latestStateRef.current = { currentIndex, queue, repeatMode };
   }, [currentIndex, queue, repeatMode]);
 
-  // Handle Track Endings (Bypassing asleep React state)
   useEffect(() => {
     const audio = audioRef.current;
     
@@ -198,7 +194,6 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
         currentTime: audio.currentTime,
         duration: audio.duration
       });
-      // Read strictly from the Ref, not the React state variables
       const { currentIndex: cIdx, queue: q, repeatMode: rm } = latestStateRef.current;
       
       let nextIndex = -1;
@@ -208,9 +203,7 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
       dbg('handleEnded: advancing from', cIdx, 'to', nextIndex);
 
       if (nextIndex !== -1) {
-        // Manually push the shadow index forward so the next song knows where it is
         latestStateRef.current.currentIndex = nextIndex;
-        
         isImperativePlayRef.current = true;
         setCurrentIndex(nextIndex); 
         playTrackUrl(q[nextIndex]);
@@ -221,16 +214,44 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
 
     audio.addEventListener('ended', handleEnded);
     return () => audio.removeEventListener('ended', handleEnded);
-  }, [playTrackUrl, setCurrentIndex]); // NO currentIndex, queue, or repeatMode here!
+  }, [playTrackUrl, setCurrentIndex]);
 
 
-  // Handle HTML5 Events
   useEffect(() => {
     const audio = audioRef.current;
     const updateProgress = () => setProgress(audio.currentTime);
     const updateDuration = () => setDuration(audio.duration);
     const handlePlay = () => { dbg('AUDIO EVENT: play (native)'); setIsPlaying(true); };
-    const handlePause = () => { dbg('AUDIO EVENT: pause (native)', 'currentTime=', audio.currentTime); setIsPlaying(false); };
+
+    const handlePause = () => {
+      dbg('AUDIO EVENT: pause (native)', 'currentTime=', audio.currentTime, 'duration=', audio.duration);
+      setIsPlaying(false);
+
+      let wasIntentional = false;
+      let nearEnd = false;
+      try {
+        wasIntentional = intentionalPauseRef.current;
+        intentionalPauseRef.current = false;
+        nearEnd = audio.duration > 0 && audio.currentTime >= audio.duration - 0.5;
+      } catch (e) {
+        dbg('handlePause: ERROR while checking phantom conditions', e.name, e.message);
+      }
+
+      dbg('handlePause: phantom check', { wasIntentional, nearEnd });
+
+      if (!wasIntentional && !nearEnd) {
+        dbg('PHANTOM PAUSE DETECTED — attempting auto-resume', 'currentTime=', audio.currentTime);
+        const resumeAttempt = (label) => {
+          audio.play()
+            .then(() => dbg('auto-resume (' + label + '): play() succeeded'))
+            .catch(e => dbg('auto-resume (' + label + '): play() FAILED', e.name, e.message));
+        };
+        resumeAttempt('immediate');
+        setTimeout(() => resumeAttempt('delayed-400ms'), 400);
+      } else {
+        dbg('handlePause: skipping auto-resume', wasIntentional ? '(was intentional)' : '(near end)');
+      }
+    };
     
     audio.addEventListener('timeupdate', updateProgress);
     audio.addEventListener('loadedmetadata', updateDuration);
@@ -245,7 +266,6 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
     };
   }, []);
 
-  // Full native media event diagnostics (stalls, waits, errors, suspends)
   useEffect(() => {
     const audio = audioRef.current;
     const evts = ['error', 'stalled', 'waiting', 'suspend', 'abort', 'emptied', 'canplay', 'canplaythrough', 'loadstart', 'loadeddata', 'playing'];
@@ -267,14 +287,12 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
     return () => evts.forEach(evt => audio.removeEventListener(evt, handlers[evt]));
   }, []);
 
-  // Visibility change diagnostics
   useEffect(() => {
     const onVis = () => dbg('VISIBILITY CHANGE:', document.visibilityState, 'hidden=', document.hidden);
     document.addEventListener('visibilitychange', onVis);
     return () => document.removeEventListener('visibilitychange', onVis);
   }, []);
 
-  // Track changes trigger playback (Fallback for UI clicks)
   useEffect(() => {
     if (isShufflingRef.current) {
       isShufflingRef.current = false;
