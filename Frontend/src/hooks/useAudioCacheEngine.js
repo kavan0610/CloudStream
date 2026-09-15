@@ -8,19 +8,18 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
 
   const fetchTrackWithRetry = useCallback((track, attempt = 1) => {
     const MAX_ATTEMPTS = 3;
-    const BACKOFF_MS = 1000; // 1s, 2s, 4s
+    const BACKOFF_MS = 1000;
 
     dbg('prefetch: starting fetch for', track.id, 'attempt', attempt);
     const start = Date.now();
 
     fetch(`https://www.googleapis.com/drive/v3/files/${track.driveFileId}?alt=media`, {
-      headers: { Authorization: `Bearer ${driveToken}` }
+      headers: { Authorization: `Bearer ${driveToken}` },
+      priority: 'low' // background prefetch — should never compete with the active track
     })
     .then(res => {
       dbg('prefetch: response for', track.id, {
-        status: res.status,
-        ok: res.ok,
-        ms: Date.now() - start,
+        status: res.status, ok: res.ok, ms: Date.now() - start,
         contentLength: res.headers.get('content-length')
       });
       return res.ok ? res.blob() : Promise.reject('Failed status ' + res.status);
@@ -49,7 +48,6 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
     });
   }, [driveToken, audioCache]);
 
-  // THE ROBUST FIX: Extract your exact sliding window logic into a callable function
   const updateWindow = useCallback((targetIndex) => {
     if (!driveToken || targetIndex < 0 || queue.length === 0) return;
 
@@ -80,8 +78,7 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
     const keepIds = [currentTrack?.id, ...tracksToKeepReady.map(t => t.id)].filter(Boolean);
 
     dbg('updateWindow: called for index', targetIndex, {
-      keepIds,
-      existingCacheKeys: Object.keys(audioCache.current)
+      keepIds, existingCacheKeys: Object.keys(audioCache.current)
     });
 
     Object.keys(audioCache.current).forEach(id => {
@@ -102,7 +99,6 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
     });
   }, [queue, driveToken, repeatMode, audioCache, fetchTrackWithRetry]);
 
-  // Keep it synced with React when the app is active
   useEffect(() => {
     updateWindow(currentIndex);
   }, [currentIndex, updateWindow]);
@@ -124,7 +120,8 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
     uniqueTracks.forEach(track => {
       audioCache.current[track.id] = 'downloading'; 
       fetch(`https://www.googleapis.com/drive/v3/files/${track.driveFileId}?alt=media`, {
-        headers: { Authorization: `Bearer ${driveToken}` }
+        headers: { Authorization: `Bearer ${driveToken}` },
+        priority: 'low' // background prefetch, not urgent
       })
       .then(res => res.ok ? res.blob() : Promise.reject('Failed'))
       .then(blob => {
@@ -140,6 +137,5 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
     });
   }, [driveToken, audioCache]);
 
-  // EXPORT updateWindow so AudioContext can trigger it manually
   return { preloadContext, updateWindow }; 
 };

@@ -23,7 +23,6 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
   const audioCache = useRef({}); 
   
   const isImperativePlayRef = useRef(false);
-  const intentionalPauseRef = useRef(false); // true only when WE call .pause() ourselves
 
   useTokenHeartbeat(userId, onTokenRefresh);
 
@@ -72,27 +71,51 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
         let response = await CacheEngine.getCachedTrack(track.driveFileId);
         dbg('playTrackUrl: CacheEngine.getCachedTrack returned', !!response);
         if (!response) {
-          const fetchStart = Date.now();
-          response = await fetch(
-            `https://www.googleapis.com/drive/v3/files/${track.driveFileId}?alt=media`, 
-            {
-              headers: { Authorization: `Bearer ${driveToken}` },
-              signal: abortControllerRef.current.signal
+          const MAX_ATTEMPTS = 3;
+          const TIMEOUT_MS = 8000;
+          let lastErr = null;
+
+          for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            const timeoutController = new AbortController();
+            const outerSignal = abortControllerRef.current.signal;
+            const timeoutId = setTimeout(() => timeoutController.abort(), TIMEOUT_MS);
+            const onOuterAbort = () => timeoutController.abort();
+            outerSignal.addEventListener('abort', onOuterAbort);
+
+            try {
+              const fetchStart = Date.now();
+              response = await fetch(
+                `https://www.googleapis.com/drive/v3/files/${track.driveFileId}?alt=media`,
+                {
+                  headers: { Authorization: `Bearer ${driveToken}` },
+                  signal: timeoutController.signal,
+                  priority: 'high' // this is the track the user is waiting to hear right now
+                }
+              );
+              clearTimeout(timeoutId);
+              outerSignal.removeEventListener('abort', onOuterAbort);
+              dbg('playTrackUrl: fetch resolved after', Date.now() - fetchStart, 'ms', {
+                trackId: track.id, status: response.status, ok: response.ok,
+                contentLength: response.headers.get('content-length')
+              });
+              if (!response.ok) throw new Error("Google Drive API Error: " + response.status);
+              lastErr = null;
+              break;
+            } catch (err) {
+              clearTimeout(timeoutId);
+              outerSignal.removeEventListener('abort', onOuterAbort);
+              lastErr = err;
+              if (outerSignal.aborted) throw err;
+              if (attempt < MAX_ATTEMPTS) {
+                await new Promise(res => setTimeout(res, 1000 * attempt));
+              }
             }
-          );
-          dbg('playTrackUrl: fetch resolved after', Date.now() - fetchStart, 'ms', {
-            trackId: track.id,
-            status: response.status,
-            ok: response.ok,
-            contentLength: response.headers.get('content-length')
-          });
-          if (!response.ok) throw new Error("Google Drive API Error: " + response.status);
+          }
+          if (lastErr) throw lastErr;
         }
         const blob = await response.blob();
         dbg('playTrackUrl: blob created', {
-          trackId: track.id,
-          size: blob.size,
-          type: blob.type,
+          trackId: track.id, size: blob.size, type: blob.type,
           expectedContentLength: response.headers.get('content-length')
         });
         localUrl = URL.createObjectURL(blob);
@@ -124,6 +147,7 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
       dbg('playTrackUrl: CAUGHT ERROR for', track.id, e.name, e.message);
       if (e.name !== 'AbortError') {
         console.error("Playback failed:", e);
+        setIsPlaying(false);
       }
       if (currentLoadedTrackIdRef.current === track.id) {
         dbg('playTrackUrl: releasing lock for', track.id);
@@ -137,12 +161,8 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
   const togglePlay = useCallback(() => {
     if (!currentTrack) return;
     dbg('togglePlay called, audio.paused=', audioRef.current.paused);
-    if (audioRef.current.paused) {
-      audioRef.current.play();
-    } else {
-      intentionalPauseRef.current = true; // mark this as OUR pause, not phantom
-      audioRef.current.pause();
-    }
+    if (audioRef.current.paused) audioRef.current.play();
+    else audioRef.current.pause();
   }, [currentTrack]);
 
   const handleNext = useCallback(() => {
@@ -190,10 +210,7 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
     const audio = audioRef.current;
     
     const handleEnded = () => {
-      dbg('AUDIO EVENT: ended fired', {
-        currentTime: audio.currentTime,
-        duration: audio.duration
-      });
+      dbg('AUDIO EVENT: ended fired', { currentTime: audio.currentTime, duration: audio.duration });
       const { currentIndex: cIdx, queue: q, repeatMode: rm } = latestStateRef.current;
       
       let nextIndex = -1;
@@ -222,36 +239,7 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
     const updateProgress = () => setProgress(audio.currentTime);
     const updateDuration = () => setDuration(audio.duration);
     const handlePlay = () => { dbg('AUDIO EVENT: play (native)'); setIsPlaying(true); };
-
-    const handlePause = () => {
-      dbg('AUDIO EVENT: pause (native)', 'currentTime=', audio.currentTime, 'duration=', audio.duration);
-      setIsPlaying(false);
-
-      let wasIntentional = false;
-      let nearEnd = false;
-      try {
-        wasIntentional = intentionalPauseRef.current;
-        intentionalPauseRef.current = false;
-        nearEnd = audio.duration > 0 && audio.currentTime >= audio.duration - 0.5;
-      } catch (e) {
-        dbg('handlePause: ERROR while checking phantom conditions', e.name, e.message);
-      }
-
-      dbg('handlePause: phantom check', { wasIntentional, nearEnd });
-
-      if (!wasIntentional && !nearEnd) {
-        dbg('PHANTOM PAUSE DETECTED — attempting auto-resume', 'currentTime=', audio.currentTime);
-        const resumeAttempt = (label) => {
-          audio.play()
-            .then(() => dbg('auto-resume (' + label + '): play() succeeded'))
-            .catch(e => dbg('auto-resume (' + label + '): play() FAILED', e.name, e.message));
-        };
-        resumeAttempt('immediate');
-        setTimeout(() => resumeAttempt('delayed-400ms'), 400);
-      } else {
-        dbg('handlePause: skipping auto-resume', wasIntentional ? '(was intentional)' : '(near end)');
-      }
-    };
+    const handlePause = () => { dbg('AUDIO EVENT: pause (native)', 'currentTime=', audio.currentTime); setIsPlaying(false); };
     
     audio.addEventListener('timeupdate', updateProgress);
     audio.addEventListener('loadedmetadata', updateDuration);
@@ -273,11 +261,7 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
     evts.forEach(evt => {
       handlers[evt] = () => {
         if (evt === 'error') {
-          dbg('AUDIO EVENT: error', {
-            code: audio.error?.code,
-            message: audio.error?.message,
-            src: audio.src?.slice(0, 60)
-          });
+          dbg('AUDIO EVENT: error', { code: audio.error?.code, message: audio.error?.message, src: audio.src?.slice(0, 60) });
         } else {
           dbg('AUDIO EVENT:', evt, 'readyState=', audio.readyState, 'networkState=', audio.networkState);
         }
@@ -322,14 +306,14 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
       try {
         navigator.mediaSession.setPositionState({
           duration: duration,
-          playbackRate: isPlaying ? 1 : 0,
+          playbackRate: 1, // must never be 0 — API throws otherwise
           position: time
         });
       } catch (e) {
         console.warn("Could not sync seek position with OS:", e);
       }
     }
-  }, [duration, isPlaying]);
+  }, [duration]);
 
   const changeVolume = useCallback((newVolume) => {
     audioRef.current.volume = newVolume;
