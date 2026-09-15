@@ -60,16 +60,14 @@ export const useMediaSession = (currentTrack, isPlaying, togglePlay, handlePrev,
       try {
         navigator.mediaSession.setPositionState({
           duration: duration,
-          playbackRate: isPlaying ? 1 : 0,
+          playbackRate: 1,
           position: progress
         });
       } catch (e) {
-        dbg('setPositionState THREW', e.message);
         console.warn("Could not set media position:", e);
       }
     }
-  }, [duration, isPlaying]); 
-
+  }, [duration, isPlaying]);
   // 3. Playback State (tells the OS this tab is actively playing — keeps Chrome
   // from throttling/freezing it in the background)
   useEffect(() => {
