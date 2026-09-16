@@ -114,6 +114,14 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
           if (lastErr) throw lastErr;
         }
         const blob = await response.blob();
+        
+        // === FIX 1: GHOST AUDIO OVERWRITE PROTECTION ===
+        // Check the lock AFTER the heavy network request finishes
+        if (currentLoadedTrackIdRef.current !== track.id) {
+          dbg('playTrackUrl: track changed during fetch, discarding blob for', track.id);
+          return; // Silently exit, the new track is already handling things
+        }
+
         dbg('playTrackUrl: blob created', {
           trackId: track.id, size: blob.size, type: blob.type,
           expectedContentLength: response.headers.get('content-length')
@@ -122,6 +130,24 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
         audioCache.current[track.id] = localUrl; 
       } else {
         dbg('playTrackUrl: using already-cached blob URL for', track.id);
+      }
+
+      // === FIX 1.5: Final safety check before swapping audio source ===
+      if (currentLoadedTrackIdRef.current !== track.id) return;
+
+      // === FIX 2: IMPERATIVE METADATA BYPASS ===
+      // Tell the OS exactly what's playing instantly, bypassing asleep React
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.metadata = new window.MediaMetadata({
+          title: track.title,
+          artist: track.artist || 'Unknown Artist',
+          album: track.album || 'Unknown Album',
+          artwork: [
+            { src: '/icon.png', sizes: '256x256', type: 'image/png' },
+            { src: '/icon.png', sizes: '512x512', type: 'image/png' }
+          ]
+        });
+        navigator.mediaSession.playbackState = 'playing';
       }
 
       dbg('playTrackUrl: setting audio.src for track', track.id, 'src=', localUrl);
@@ -238,8 +264,20 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
     const audio = audioRef.current;
     const updateProgress = () => setProgress(audio.currentTime);
     const updateDuration = () => setDuration(audio.duration);
-    const handlePlay = () => { dbg('AUDIO EVENT: play (native)'); setIsPlaying(true); };
-    const handlePause = () => { dbg('AUDIO EVENT: pause (native)', 'currentTime=', audio.currentTime); setIsPlaying(false); };
+    
+    // === FIX 3: NATIVE IMPERATIVE MEDIA SESSION SYNC ===
+    // This tells Android OS exactly what is happening the millisecond it happens
+    const handlePlay = () => { 
+      dbg('AUDIO EVENT: play (native)'); 
+      setIsPlaying(true); 
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+    };
+    
+    const handlePause = () => { 
+      dbg('AUDIO EVENT: pause (native)', 'currentTime=', audio.currentTime); 
+      setIsPlaying(false); 
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+    };
     
     audio.addEventListener('timeupdate', updateProgress);
     audio.addEventListener('loadedmetadata', updateDuration);

@@ -1,10 +1,12 @@
-import { useEffect, useCallback } from 'react';
-
+import { useEffect, useCallback, useRef } from 'react';
 import { debugLog } from '../utils/debugOverlay';
 
 const dbg = (...args) => debugLog('MEDIASESSION', ...args);
 
 export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex, repeatMode) => {
+
+  // 1. Ref to track and kill background network requests
+  const prefetchControllers = useRef({});
 
   const fetchTrackWithRetry = useCallback((track, attempt = 1) => {
     const MAX_ATTEMPTS = 3;
@@ -13,9 +15,14 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
     dbg('prefetch: starting fetch for', track.id, 'attempt', attempt);
     const start = Date.now();
 
+    // 2. Create the abort controller for this specific fetch
+    const controller = new AbortController();
+    prefetchControllers.current[track.id] = controller;
+
     fetch(`https://www.googleapis.com/drive/v3/files/${track.driveFileId}?alt=media`, {
       headers: { Authorization: `Bearer ${driveToken}` },
-      priority: 'low' // background prefetch — should never compete with the active track
+      priority: 'low',
+      signal: controller.signal // Attach signal
     })
     .then(res => {
       dbg('prefetch: response for', track.id, {
@@ -25,15 +32,24 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
       return res.ok ? res.blob() : Promise.reject('Failed status ' + res.status);
     })
     .then(blob => {
+      delete prefetchControllers.current[track.id]; // Cleanup
       dbg('prefetch: blob ready for', track.id, 'size=', blob.size);
       if (audioCache.current[track.id] === 'downloading') {
         audioCache.current[track.id] = URL.createObjectURL(blob);
         dbg('prefetch: cached blob URL for', track.id);
       } else {
-        dbg('prefetch: slot no longer downloading, discarding blob for', track.id, 'current value=', audioCache.current[track.id]);
+        dbg('prefetch: slot no longer downloading, discarding blob for', track.id);
       }
     })
     .catch((err) => {
+      delete prefetchControllers.current[track.id]; // Cleanup
+      
+      // EXTREMELY IMPORTANT: Exit silently if we intentionally killed this request
+      if (err.name === 'AbortError') {
+         dbg('prefetch: ABORTED intentionally for', track.id);
+         return; 
+      }
+
       dbg('prefetch: FAILED for', track.id, 'attempt', attempt, err);
       if (audioCache.current[track.id] !== 'downloading') {
         dbg('prefetch: slot changed during failure, not retrying', track.id);
@@ -83,6 +99,13 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
 
     Object.keys(audioCache.current).forEach(id => {
       if (!keepIds.includes(id)) {
+        
+        // 3. KILL ORPHANED NETWORK REQUESTS INSTANTLY
+        if (prefetchControllers.current[id]) {
+          prefetchControllers.current[id].abort();
+          delete prefetchControllers.current[id];
+        }
+
         if (audioCache.current[id] && audioCache.current[id] !== 'downloading') {
           URL.revokeObjectURL(audioCache.current[id]); 
         }
@@ -119,18 +142,27 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
 
     uniqueTracks.forEach(track => {
       audioCache.current[track.id] = 'downloading'; 
+      
+      const controller = new AbortController();
+      prefetchControllers.current[track.id] = controller;
+
       fetch(`https://www.googleapis.com/drive/v3/files/${track.driveFileId}?alt=media`, {
         headers: { Authorization: `Bearer ${driveToken}` },
-        priority: 'low' // background prefetch, not urgent
+        priority: 'low',
+        signal: controller.signal
       })
       .then(res => res.ok ? res.blob() : Promise.reject('Failed'))
       .then(blob => {
+        delete prefetchControllers.current[track.id];
         dbg('preloadContext: blob ready for', track.id, 'size=', blob.size);
         if (audioCache.current[track.id] === 'downloading') {
           audioCache.current[track.id] = URL.createObjectURL(blob);
         }
       })
       .catch((err) => {
+        delete prefetchControllers.current[track.id];
+        if (err.name === 'AbortError') return;
+
         dbg('preloadContext: FAILED for', track.id, err);
         if (audioCache.current[track.id] === 'downloading') delete audioCache.current[track.id];
       });

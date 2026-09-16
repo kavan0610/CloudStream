@@ -56,18 +56,19 @@ export const useMediaSession = (currentTrack, isPlaying, togglePlay, handlePrev,
 
   // 2. Timeline & Progress Bar (Position State)
   useEffect(() => {
-    if ('mediaSession' in navigator && duration > 0 && progress >= 0) {
+    if ('mediaSession' in navigator && duration > 0) {
       try {
         navigator.mediaSession.setPositionState({
           duration: duration,
-          playbackRate: 1,
-          position: progress
+          playbackRate: 1, 
+          position: 0 // Always 0 when a new track loads. Seek handles manual jumps.
         });
       } catch (e) {
         console.warn("Could not set media position:", e);
       }
     }
-  }, [duration, isPlaying]);
+  }, [duration]);
+  
   // 3. Playback State (tells the OS this tab is actively playing — keeps Chrome
   // from throttling/freezing it in the background)
   useEffect(() => {
