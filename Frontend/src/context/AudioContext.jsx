@@ -23,6 +23,9 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
   const audioCache = useRef({}); 
   
   const isImperativePlayRef = useRef(false);
+  
+  // THE FIX: Track when we are manually transitioning so we can ignore phantom pauses
+  const isTransitioningRef = useRef(false);
 
   useTokenHeartbeat(userId, onTokenRefresh);
 
@@ -89,7 +92,7 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
                 {
                   headers: { Authorization: `Bearer ${driveToken}` },
                   signal: timeoutController.signal,
-                  priority: 'high' // this is the track the user is waiting to hear right now
+                  priority: 'high' 
                 }
               );
               clearTimeout(timeoutId);
@@ -115,11 +118,9 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
         }
         const blob = await response.blob();
         
-        // === FIX 1: GHOST AUDIO OVERWRITE PROTECTION ===
-        // Check the lock AFTER the heavy network request finishes
         if (currentLoadedTrackIdRef.current !== track.id) {
           dbg('playTrackUrl: track changed during fetch, discarding blob for', track.id);
-          return; // Silently exit, the new track is already handling things
+          return; 
         }
 
         dbg('playTrackUrl: blob created', {
@@ -132,11 +133,8 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
         dbg('playTrackUrl: using already-cached blob URL for', track.id);
       }
 
-      // === FIX 1.5: Final safety check before swapping audio source ===
       if (currentLoadedTrackIdRef.current !== track.id) return;
 
-      // === FIX 2: IMPERATIVE METADATA BYPASS ===
-      // Tell the OS exactly what's playing instantly, bypassing asleep React
       if ('mediaSession' in navigator) {
         navigator.mediaSession.metadata = new window.MediaMetadata({
           title: track.title,
@@ -150,17 +148,26 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
         navigator.mediaSession.playbackState = 'playing';
       }
 
+      // Tell event listeners to ignore the pause that happens when changing the src
+      isTransitioningRef.current = true;
+
       dbg('playTrackUrl: setting audio.src for track', track.id, 'src=', localUrl);
       audioRef.current.src = localUrl;
       
       const playPromise = audioRef.current.play();
       if (playPromise !== undefined) {
         playPromise
-          .then(() => dbg('playTrackUrl: play() promise RESOLVED for', track.id))
+          .then(() => {
+            isTransitioningRef.current = false;
+            dbg('playTrackUrl: play() promise RESOLVED for', track.id);
+          })
           .catch(e => {
+            isTransitioningRef.current = false;
             dbg('playTrackUrl: play() promise REJECTED for', track.id, e.name, e.message);
             if (e.name !== 'AbortError') console.error("Playback interrupted:", e);
           });
+      } else {
+        isTransitioningRef.current = false;
       }
 
       const trackIdx = queue.findIndex(t => t.id === track.id);
@@ -265,15 +272,22 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
     const updateProgress = () => setProgress(audio.currentTime);
     const updateDuration = () => setDuration(audio.duration);
     
-    // === FIX 3: NATIVE IMPERATIVE MEDIA SESSION SYNC ===
-    // This tells Android OS exactly what is happening the millisecond it happens
     const handlePlay = () => { 
       dbg('AUDIO EVENT: play (native)'); 
       setIsPlaying(true); 
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
     };
     
+    // THE ULTIMATE FIX: Intercept the phantom pause
     const handlePause = () => { 
+      // 1. Did the track end naturally? (currentTime is within 0.2s of duration)
+      const isNaturalEnd = audio.duration > 0 && Math.abs(audio.currentTime - audio.duration) < 0.2;
+      
+      if (isNaturalEnd || isTransitioningRef.current) {
+        dbg('AUDIO EVENT: pause (native) IGNORED - track transitioning');
+        return; 
+      }
+
       dbg('AUDIO EVENT: pause (native)', 'currentTime=', audio.currentTime); 
       setIsPlaying(false); 
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
@@ -344,7 +358,7 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
       try {
         navigator.mediaSession.setPositionState({
           duration: duration,
-          playbackRate: 1, // must never be 0 — API throws otherwise
+          playbackRate: 1, 
           position: time
         });
       } catch (e) {
