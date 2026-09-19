@@ -152,27 +152,33 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
       isTransitioningRef.current = true;
 
       dbg('playTrackUrl: setting audio.src for track', track.id, 'src=', localUrl);
+      
+      // 1. Set the source
       audioRef.current.src = localUrl;
       
+      // 2. Call play synchronously
       const playPromise = audioRef.current.play();
+      
+      // 3. SYNCHRONOUSLY set the metadata BEFORE the function ends.
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.metadata = new window.MediaMetadata({
+          title: track.title,
+          artist: track.artist || 'Unknown Artist',
+          album: track.album || 'Unknown Album',
+          artwork: [
+            { src: `${window.location.origin}/icon.png`, sizes: '256x256', type: 'image/png' },
+            { src: `${window.location.origin}/icon.png`, sizes: '512x512', type: 'image/png' }
+          ]
+        });
+        navigator.mediaSession.playbackState = 'playing';
+      }
+
+      // 4. Handle the promise strictly for error logging and transition state
       if (playPromise !== undefined) {
         playPromise
           .then(() => {
             isTransitioningRef.current = false;
             dbg('playTrackUrl: play() promise RESOLVED for', track.id);
-            
-            if ('mediaSession' in navigator) {
-              navigator.mediaSession.metadata = new window.MediaMetadata({
-                title: track.title,
-                artist: track.artist || 'Unknown Artist',
-                album: track.album || 'Unknown Album',
-                artwork: [
-                  { src: `${window.location.origin}/icon.png`, sizes: '256x256', type: 'image/png' },
-                  { src: `${window.location.origin}/icon.png`, sizes: '512x512', type: 'image/png' }
-                ]
-              });
-              navigator.mediaSession.playbackState = 'playing';
-            }
           })
           .catch(e => {
             isTransitioningRef.current = false;
