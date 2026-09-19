@@ -141,8 +141,8 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
           artist: track.artist || 'Unknown Artist',
           album: track.album || 'Unknown Album',
           artwork: [
-            { src: '/icon.png', sizes: '256x256', type: 'image/png' },
-            { src: '/icon.png', sizes: '512x512', type: 'image/png' }
+            { src: `${window.location.origin}/icon.png`, sizes: '256x256', type: 'image/png' },
+            { src: `${window.location.origin}/icon.png`, sizes: '512x512', type: 'image/png' }
           ]
         });
         navigator.mediaSession.playbackState = 'playing';

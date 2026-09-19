@@ -17,10 +17,9 @@ export const useMediaSession = (currentTrack, isPlaying, togglePlay, handlePrev,
           title: currentTrack.title,
           artist: currentTrack.artist || 'Unknown Artist',
           album: currentTrack.album || 'Unknown Album',
-          // Explicitly hand the OS a high-res image so it doesn't stretch your favicon
           artwork: [
-            { src: '/icon.png', sizes: '256x256', type: 'image/png' },
-            { src: '/icon.png', sizes: '512x512', type: 'image/png' }
+            { src: `${window.location.origin}/icon.png`, sizes: '256x256', type: 'image/png' },
+            { src: `${window.location.origin}/icon.png`, sizes: '512x512', type: 'image/png' }
           ]
         });
       } else {
