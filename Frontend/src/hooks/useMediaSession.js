@@ -1,43 +1,30 @@
 // src/hooks/useMediaSession.js
 import { useEffect } from 'react';
-
 import { debugLog } from '../utils/debugOverlay';
 
 const dbg = (...args) => debugLog('MEDIASESSION', ...args);
 
 export const useMediaSession = (currentTrack, isPlaying, togglePlay, handlePrev, handleNext, seek, duration, progress) => {
 
-  // 1. Metadata & Hardware Buttons
+  // 1. Hardware Buttons & Lock Screen Actions
   useEffect(() => {
     if ('mediaSession' in navigator) {
       
-      if (currentTrack) {
-        dbg('metadata set for', currentTrack.title, currentTrack.id);
-        navigator.mediaSession.metadata = new window.MediaMetadata({
-          title: currentTrack.title,
-          artist: currentTrack.artist || 'Unknown Artist',
-          album: currentTrack.album || 'Unknown Album',
-          artwork: [
-            { src: `${window.location.origin}/icon.png`, sizes: '256x256', type: 'image/png' },
-            { src: `${window.location.origin}/icon.png`, sizes: '512x512', type: 'image/png' }
-          ]
-        });
-      } else {
-        dbg('metadata effect ran but currentTrack is null');
-      }
-
       navigator.mediaSession.setActionHandler('play', () => {
         dbg('OS action: play pressed, isPlaying=', isPlaying);
         if (!isPlaying) togglePlay();
       });
+      
       navigator.mediaSession.setActionHandler('pause', () => {
         dbg('OS action: pause pressed, isPlaying=', isPlaying);
         if (isPlaying) togglePlay();
       });
+      
       navigator.mediaSession.setActionHandler('previoustrack', () => {
         dbg('OS action: previoustrack pressed');
         handlePrev();
       });
+      
       navigator.mediaSession.setActionHandler('nexttrack', () => {
         dbg('OS action: nexttrack pressed');
         handleNext();
@@ -51,7 +38,7 @@ export const useMediaSession = (currentTrack, isPlaying, togglePlay, handlePrev,
         }
       });
     }
-  }, [currentTrack, isPlaying, togglePlay, handlePrev, handleNext, seek]);
+  }, [isPlaying, togglePlay, handlePrev, handleNext, seek]);
 
   // 2. Timeline & Progress Bar (Position State)
   useEffect(() => {

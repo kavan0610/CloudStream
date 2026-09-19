@@ -160,6 +160,19 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
           .then(() => {
             isTransitioningRef.current = false;
             dbg('playTrackUrl: play() promise RESOLVED for', track.id);
+            
+            if ('mediaSession' in navigator) {
+              navigator.mediaSession.metadata = new window.MediaMetadata({
+                title: track.title,
+                artist: track.artist || 'Unknown Artist',
+                album: track.album || 'Unknown Album',
+                artwork: [
+                  { src: `${window.location.origin}/icon.png`, sizes: '256x256', type: 'image/png' },
+                  { src: `${window.location.origin}/icon.png`, sizes: '512x512', type: 'image/png' }
+                ]
+              });
+              navigator.mediaSession.playbackState = 'playing';
+            }
           })
           .catch(e => {
             isTransitioningRef.current = false;
