@@ -24,6 +24,7 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
   
   const isImperativePlayRef = useRef(false);
   const isTransitioningRef = useRef(false);
+  const currentLoadedTrackIdRef = useRef(null);
 
   useTokenHeartbeat(userId, onTokenRefresh);
 
@@ -37,45 +38,72 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
     audioCache, driveToken, queue, currentIndex, repeatMode
   );
 
-  const currentLoadedTrackIdRef = useRef(null);
-
   const playTrackUrl = useCallback(async (track) => {
-    if (!track || !driveToken || driveToken === 'undefined') return;
+    if (!track || !driveToken || driveToken === 'undefined') {
+      dbg('playTrackUrl: bailed early', { hasTrack: !!track, driveToken });
+      return;
+    }
 
-    if (currentLoadedTrackIdRef.current === track.id) return;
+    dbg('playTrackUrl: called for', track.id, track.title);
+
+    if (currentLoadedTrackIdRef.current === track.id) {
+      dbg('playTrackUrl: BLOCKED by lock, already loaded', track.id);
+      return;
+    }
+    
     currentLoadedTrackIdRef.current = track.id;
+    dbg('playTrackUrl: lock acquired for', track.id);
 
     CacheEngine.incrementPlayCount(track.driveFileId);
     if (track.isFavourite || track.isFavorite) CacheEngine.cacheTrack(track, driveToken);
 
     try {
-      if (abortControllerRef.current) abortControllerRef.current.abort();
+      if (abortControllerRef.current) {
+        dbg('playTrackUrl: aborting previous controller');
+        abortControllerRef.current.abort();
+      }
       abortControllerRef.current = new AbortController();
 
       let localUrl = audioCache.current[track.id];
+      dbg('playTrackUrl: cache state for', track.id, '=', localUrl);
 
-      // RESTORED ORIGINAL FETCH LOGIC: Ensures fast loads and utilizes your cache engine
+      // --- YOUR EXACT ORIGINAL FAST FETCH LOGIC ---
       if (!localUrl || localUrl === 'downloading') {
+        dbg('playTrackUrl: no usable cached blob, fetching from Drive API', track.id);
         let response = await CacheEngine.getCachedTrack(track.driveFileId);
+        dbg('playTrackUrl: CacheEngine.getCachedTrack returned', !!response);
+        
         if (!response) {
           const MAX_ATTEMPTS = 3;
+          const TIMEOUT_MS = 8000;
           let lastErr = null;
 
           for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             const timeoutController = new AbortController();
             const outerSignal = abortControllerRef.current.signal;
-            const timeoutId = setTimeout(() => timeoutController.abort(), 8000);
+            const timeoutId = setTimeout(() => timeoutController.abort(), TIMEOUT_MS);
             const onOuterAbort = () => timeoutController.abort();
             outerSignal.addEventListener('abort', onOuterAbort);
 
             try {
+              const fetchStart = Date.now();
               response = await fetch(
                 `https://www.googleapis.com/drive/v3/files/${track.driveFileId}?alt=media`,
-                { headers: { Authorization: `Bearer ${driveToken}` }, signal: timeoutController.signal }
+                {
+                  headers: { Authorization: `Bearer ${driveToken}` },
+                  signal: timeoutController.signal,
+                  priority: 'high' // Helps browser prioritize this over cacheEngine background fetches
+                }
               );
               clearTimeout(timeoutId);
               outerSignal.removeEventListener('abort', onOuterAbort);
-              if (!response.ok) throw new Error("Google Drive API Error");
+              
+              dbg('playTrackUrl: fetch resolved after', Date.now() - fetchStart, 'ms', {
+                trackId: track.id, status: response.status, ok: response.ok,
+                contentLength: response.headers.get('content-length')
+              });
+              
+              if (!response.ok) throw new Error("Google Drive API Error: " + response.status);
               lastErr = null;
               break;
             } catch (err) {
@@ -83,20 +111,34 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
               outerSignal.removeEventListener('abort', onOuterAbort);
               lastErr = err;
               if (outerSignal.aborted) throw err;
-              if (attempt < MAX_ATTEMPTS) await new Promise(res => setTimeout(res, 1000 * attempt));
+              if (attempt < MAX_ATTEMPTS) {
+                await new Promise(res => setTimeout(res, 1000 * attempt));
+              }
             }
           }
           if (lastErr) throw lastErr;
         }
-        
         const blob = await response.blob();
-        if (currentLoadedTrackIdRef.current !== track.id) return;
         
+        if (currentLoadedTrackIdRef.current !== track.id) {
+          dbg('playTrackUrl: track changed during fetch, discarding blob for', track.id);
+          isTransitioningRef.current = false;
+          return; 
+        }
+
+        dbg('playTrackUrl: blob created', {
+          trackId: track.id, size: blob.size, type: blob.type
+        });
         localUrl = URL.createObjectURL(blob);
         audioCache.current[track.id] = localUrl; 
+      } else {
+        dbg('playTrackUrl: using already-cached blob URL for', track.id);
       }
 
-      if (currentLoadedTrackIdRef.current !== track.id) return;
+      if (currentLoadedTrackIdRef.current !== track.id) {
+        isTransitioningRef.current = false;
+        return;
+      }
 
       // 1. FIX: Set Metadata BEFORE swapping src. This bridges the lock screen session.
       if ('mediaSession' in navigator) {
@@ -113,6 +155,7 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
 
       // 2. Lock event listeners during the swap
       isTransitioningRef.current = true;
+      dbg('playTrackUrl: setting audio.src for track', track.id);
       audioRef.current.src = localUrl;
       
       const playPromise = audioRef.current.play();
@@ -121,12 +164,14 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
         playPromise
           .then(() => {
             isTransitioningRef.current = false;
+            dbg('playTrackUrl: play() promise RESOLVED for', track.id);
             if ('mediaSession' in navigator) {
               navigator.mediaSession.playbackState = 'playing';
             }
           })
           .catch(e => {
             isTransitioningRef.current = false;
+            dbg('playTrackUrl: play() promise REJECTED for', track.id, e.name, e.message);
             if (e.name !== 'AbortError') console.error("Playback interrupted:", e);
           });
       } else {
@@ -134,12 +179,21 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
       }
 
       const trackIdx = queue.findIndex(t => t.id === track.id);
-      if (trackIdx !== -1) updateWindow(trackIdx);
+      if (trackIdx !== -1) {
+        dbg('playTrackUrl: calling updateWindow for index', trackIdx);
+        updateWindow(trackIdx);
+      }
 
     } catch (e) {
+      dbg('playTrackUrl: CAUGHT ERROR for', track.id, e.name, e.message);
       isTransitioningRef.current = false;
-      if (e.name !== 'AbortError') setIsPlaying(false);
-      if (currentLoadedTrackIdRef.current === track.id) currentLoadedTrackIdRef.current = null;
+      if (e.name !== 'AbortError') {
+        console.error("Playback failed:", e);
+        setIsPlaying(false);
+      }
+      if (currentLoadedTrackIdRef.current === track.id) {
+        currentLoadedTrackIdRef.current = null;
+      }
     }
   }, [driveToken, audioCache, queue, updateWindow]);
 
@@ -178,7 +232,7 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
   }, [currentTrack]);
 
   const handleNext = useCallback(() => {
-    isTransitioningRef.current = true; // Lock before manually advancing
+    isTransitioningRef.current = true; 
     advanceToNextTrack();
   }, [advanceToNextTrack]);
 
