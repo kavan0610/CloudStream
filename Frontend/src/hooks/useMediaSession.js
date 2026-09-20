@@ -1,44 +1,31 @@
 // src/hooks/useMediaSession.js
 import { useEffect } from 'react';
-
 import { debugLog } from '../utils/debugOverlay';
 
 const dbg = (...args) => debugLog('MEDIASESSION', ...args);
 
 export const useMediaSession = (currentTrack, isPlaying, togglePlay, handlePrev, handleNext, seek, duration, progress) => {
 
-  // 1. Metadata & Hardware Buttons
+  // 1. Hardware Buttons & Lock Screen Actions
+  // (Metadata assignment is handled synchronously in AudioContext to prevent drops)
   useEffect(() => {
     if ('mediaSession' in navigator) {
       
-      if (currentTrack) {
-        dbg('metadata set for', currentTrack.title, currentTrack.id);
-        navigator.mediaSession.metadata = new window.MediaMetadata({
-          title: currentTrack.title,
-          artist: currentTrack.artist || 'Unknown Artist',
-          album: currentTrack.album || 'Unknown Album',
-          // Explicitly hand the OS a high-res image so it doesn't stretch your favicon
-          artwork: [
-            { src: '/icon.png', sizes: '256x256', type: 'image/png' },
-            { src: '/icon.png', sizes: '512x512', type: 'image/png' }
-          ]
-        });
-      } else {
-        dbg('metadata effect ran but currentTrack is null');
-      }
-
       navigator.mediaSession.setActionHandler('play', () => {
         dbg('OS action: play pressed, isPlaying=', isPlaying);
         if (!isPlaying) togglePlay();
       });
+      
       navigator.mediaSession.setActionHandler('pause', () => {
         dbg('OS action: pause pressed, isPlaying=', isPlaying);
         if (isPlaying) togglePlay();
       });
+      
       navigator.mediaSession.setActionHandler('previoustrack', () => {
         dbg('OS action: previoustrack pressed');
         handlePrev();
       });
+      
       navigator.mediaSession.setActionHandler('nexttrack', () => {
         dbg('OS action: nexttrack pressed');
         handleNext();
@@ -52,7 +39,7 @@ export const useMediaSession = (currentTrack, isPlaying, togglePlay, handlePrev,
         }
       });
     }
-  }, [currentTrack, isPlaying, togglePlay, handlePrev, handleNext, seek]);
+  }, [isPlaying, togglePlay, handlePrev, handleNext, seek]);
 
   // 2. Timeline & Progress Bar (Position State)
   useEffect(() => {
@@ -61,7 +48,7 @@ export const useMediaSession = (currentTrack, isPlaying, togglePlay, handlePrev,
         navigator.mediaSession.setPositionState({
           duration: duration,
           playbackRate: 1, 
-          position: 0 // Always 0 when a new track loads. Seek handles manual jumps.
+          position: 0 
         });
       } catch (e) {
         console.warn("Could not set media position:", e);
@@ -69,12 +56,10 @@ export const useMediaSession = (currentTrack, isPlaying, togglePlay, handlePrev,
     }
   }, [duration]);
   
-  // 3. Playback State (tells the OS this tab is actively playing — keeps Chrome
-  // from throttling/freezing it in the background)
+  // 3. Playback State Sync
   useEffect(() => {
     if ('mediaSession' in navigator) {
       navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
-      dbg('playbackState set to', navigator.mediaSession.playbackState, 'isPlaying=', isPlaying);
     }
   }, [isPlaying]);
 };
