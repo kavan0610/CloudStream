@@ -58,6 +58,9 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
     if (track.isFavourite || track.isFavorite) CacheEngine.cacheTrack(track, driveToken);
 
     try {
+      dbg('playTrackUrl: pausing current audio before switch');
+      audioRef.current.pause();
+
       if (abortControllerRef.current) {
         dbg('playTrackUrl: aborting previous controller');
         abortControllerRef.current.abort();
@@ -134,19 +137,6 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
       }
 
       if (currentLoadedTrackIdRef.current !== track.id) return;
-
-      if ('mediaSession' in navigator) {
-        navigator.mediaSession.metadata = new window.MediaMetadata({
-          title: track.title,
-          artist: track.artist || 'Unknown Artist',
-          album: track.album || 'Unknown Album',
-          artwork: [
-            { src: `${window.location.origin}/icon.png`, sizes: '256x256', type: 'image/png' },
-            { src: `${window.location.origin}/icon.png`, sizes: '512x512', type: 'image/png' }
-          ]
-        });
-        navigator.mediaSession.playbackState = 'playing';
-      }
 
       isTransitioningRef.current = true;
 
