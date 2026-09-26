@@ -3,7 +3,7 @@ import { debugLog } from '../utils/debugOverlay';
 
 const dbg = (...args) => debugLog('MEDIASESSION', ...args);
 
-export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex, repeatMode) => {
+export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex, repeatMode, activeTrackIdRef) => {
 
   // 1. Ref to track and kill background network requests
   const prefetchControllers = useRef({});
@@ -43,11 +43,11 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
     })
     .catch((err) => {
       delete prefetchControllers.current[track.id]; // Cleanup
-      
+
       // EXTREMELY IMPORTANT: Exit silently if we intentionally killed this request
       if (err.name === 'AbortError') {
          dbg('prefetch: ABORTED intentionally for', track.id);
-         return; 
+         return;
       }
 
       dbg('prefetch: FAILED for', track.id, 'attempt', attempt, err);
@@ -67,9 +67,9 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
   const updateWindow = useCallback((targetIndex) => {
     if (!driveToken || targetIndex < 0 || queue.length === 0) return;
 
-    const CACHE_WINDOW_NEXT = 2; 
-    const CACHE_WINDOW_PREV = 2; 
-    
+    const CACHE_WINDOW_NEXT = 2;
+    const CACHE_WINDOW_PREV = 2;
+
     const currentTrack = queue[targetIndex];
     const tracksToKeepReady = [];
 
@@ -91,15 +91,18 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
       if (queue[prevIdx]) tracksToKeepReady.push(queue[prevIdx]);
     }
 
-    const keepIds = [currentTrack?.id, ...tracksToKeepReady.map(t => t.id)].filter(Boolean);
+    const keepIds = [currentTrack?.id, ...tracksToKeepReady.map(t => t.id), activeTrackIdRef?.current].filter(Boolean);
 
     dbg('updateWindow: called for index', targetIndex, {
       keepIds, existingCacheKeys: Object.keys(audioCache.current)
     });
 
     Object.keys(audioCache.current).forEach(id => {
+      if (id === activeTrackIdRef?.current && !keepIds.slice(0, -1).includes(id)) {
+        dbg('updateWindow: STALE WINDOW would have evicted the ACTIVELY PLAYING track', id, '- skipped');
+      }
       if (!keepIds.includes(id)) {
-        
+
         // 3. KILL ORPHANED NETWORK REQUESTS INSTANTLY
         if (prefetchControllers.current[id]) {
           prefetchControllers.current[id].abort();
@@ -107,7 +110,7 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
         }
 
         if (audioCache.current[id] && audioCache.current[id] !== 'downloading') {
-          URL.revokeObjectURL(audioCache.current[id]); 
+          URL.revokeObjectURL(audioCache.current[id]);
         }
         dbg('updateWindow: evicting from cache', id);
         delete audioCache.current[id];
@@ -116,11 +119,11 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
 
     tracksToKeepReady.forEach(track => {
       if (!audioCache.current[track.id]) {
-        audioCache.current[track.id] = 'downloading'; 
+        audioCache.current[track.id] = 'downloading';
         fetchTrackWithRetry(track);
       }
     });
-  }, [queue, driveToken, repeatMode, audioCache, fetchTrackWithRetry]);
+  }, [queue, driveToken, repeatMode, audioCache, fetchTrackWithRetry, activeTrackIdRef]);
 
   useEffect(() => {
     updateWindow(currentIndex);
@@ -134,15 +137,15 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
       shuffledQueue[0], shuffledQueue[1]
     ].filter(Boolean);
 
-    const uniqueTracks = tracksToPreload.filter((t, index, self) => 
+    const uniqueTracks = tracksToPreload.filter((t, index, self) =>
       self.findIndex(s => s.id === t.id) === index && !audioCache.current[t.id]
     );
 
     dbg('preloadContext: preloading', uniqueTracks.map(t => t.id));
 
     uniqueTracks.forEach(track => {
-      audioCache.current[track.id] = 'downloading'; 
-      
+      audioCache.current[track.id] = 'downloading';
+
       const controller = new AbortController();
       prefetchControllers.current[track.id] = controller;
 
@@ -169,5 +172,5 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
     });
   }, [driveToken, audioCache]);
 
-  return { preloadContext, updateWindow }; 
+  return { preloadContext, updateWindow };
 };

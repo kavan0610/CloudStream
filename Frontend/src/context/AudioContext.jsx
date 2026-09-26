@@ -33,11 +33,11 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
     toggleRepeat, syncActiveContext 
   } = useAudioQueue(audioCache);
 
-  const { preloadContext, updateWindow } = useAudioCacheEngine(
-    audioCache, driveToken, queue, currentIndex, repeatMode
-  );
-
   const currentLoadedTrackIdRef = useRef(null);
+
+  const { preloadContext, updateWindow } = useAudioCacheEngine(
+    audioCache, driveToken, queue, currentIndex, repeatMode, currentLoadedTrackIdRef
+  );
 
   const playTrackUrl = useCallback(async (track) => {
     if (!track || !driveToken || driveToken === 'undefined') {
