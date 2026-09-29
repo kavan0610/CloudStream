@@ -1,8 +1,5 @@
 // src/hooks/useMediaSession.js
 import { useEffect } from 'react';
-import { debugLog } from '../utils/debugOverlay';
-
-const dbg = (...args) => debugLog('MEDIASESSION', ...args);
 
 export const useMediaSession = (currentTrack, isPlaying, togglePlay, handlePrev, handleNext, seek, duration, progress) => {
 
@@ -12,28 +9,23 @@ export const useMediaSession = (currentTrack, isPlaying, togglePlay, handlePrev,
     if ('mediaSession' in navigator) {
       
       navigator.mediaSession.setActionHandler('play', () => {
-        dbg('OS action: play pressed, isPlaying=', isPlaying);
         if (!isPlaying) togglePlay();
       });
       
       navigator.mediaSession.setActionHandler('pause', () => {
-        dbg('OS action: pause pressed, isPlaying=', isPlaying);
         if (isPlaying) togglePlay();
       });
       
       navigator.mediaSession.setActionHandler('previoustrack', () => {
-        dbg('OS action: previoustrack pressed');
         handlePrev();
       });
       
       navigator.mediaSession.setActionHandler('nexttrack', () => {
-        dbg('OS action: nexttrack pressed');
         handleNext();
       });
       
       // Allow the user to drag the timeline on the lock screen
       navigator.mediaSession.setActionHandler('seekto', (details) => {
-        dbg('OS action: seekto', details.seekTime);
         if (details.seekTime !== undefined) {
           seek(details.seekTime);
         }

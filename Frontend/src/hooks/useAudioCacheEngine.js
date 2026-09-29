@@ -1,7 +1,4 @@
 import { useEffect, useCallback, useRef } from 'react';
-import { debugLog } from '../utils/debugOverlay';
-
-const dbg = (...args) => debugLog('MEDIASESSION', ...args);
 
 export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex, repeatMode) => {
 
@@ -11,9 +8,6 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
   const fetchTrackWithRetry = useCallback((track, attempt = 1) => {
     const MAX_ATTEMPTS = 3;
     const BACKOFF_MS = 1000;
-
-    dbg('prefetch: starting fetch for', track.id, 'attempt', attempt);
-    const start = Date.now();
 
     // 2. Create the abort controller for this specific fetch
     const controller = new AbortController();
@@ -25,20 +19,12 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
       signal: controller.signal // Attach signal
     })
     .then(res => {
-      dbg('prefetch: response for', track.id, {
-        status: res.status, ok: res.ok, ms: Date.now() - start,
-        contentLength: res.headers.get('content-length')
-      });
       return res.ok ? res.blob() : Promise.reject('Failed status ' + res.status);
     })
     .then(blob => {
       delete prefetchControllers.current[track.id]; // Cleanup
-      dbg('prefetch: blob ready for', track.id, 'size=', blob.size);
       if (audioCache.current[track.id] === 'downloading') {
         audioCache.current[track.id] = URL.createObjectURL(blob);
-        dbg('prefetch: cached blob URL for', track.id);
-      } else {
-        dbg('prefetch: slot no longer downloading, discarding blob for', track.id);
       }
     })
     .catch((err) => {
@@ -46,19 +32,15 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
       
       // EXTREMELY IMPORTANT: Exit silently if we intentionally killed this request
       if (err.name === 'AbortError') {
-         dbg('prefetch: ABORTED intentionally for', track.id);
          return; 
       }
 
-      dbg('prefetch: FAILED for', track.id, 'attempt', attempt, err);
       if (audioCache.current[track.id] !== 'downloading') {
-        dbg('prefetch: slot changed during failure, not retrying', track.id);
         return;
       }
       if (attempt < MAX_ATTEMPTS) {
         setTimeout(() => fetchTrackWithRetry(track, attempt + 1), BACKOFF_MS * attempt);
       } else {
-        dbg('prefetch: giving up on', track.id, 'after', MAX_ATTEMPTS, 'attempts');
         delete audioCache.current[track.id];
       }
     });
@@ -93,10 +75,6 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
 
     const keepIds = [currentTrack?.id, ...tracksToKeepReady.map(t => t.id)].filter(Boolean);
 
-    dbg('updateWindow: called for index', targetIndex, {
-      keepIds, existingCacheKeys: Object.keys(audioCache.current)
-    });
-
     Object.keys(audioCache.current).forEach(id => {
       if (!keepIds.includes(id)) {
         
@@ -109,7 +87,6 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
         if (audioCache.current[id] && audioCache.current[id] !== 'downloading') {
           URL.revokeObjectURL(audioCache.current[id]); 
         }
-        dbg('updateWindow: evicting from cache', id);
         delete audioCache.current[id];
       }
     });
@@ -138,8 +115,6 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
       self.findIndex(s => s.id === t.id) === index && !audioCache.current[t.id]
     );
 
-    dbg('preloadContext: preloading', uniqueTracks.map(t => t.id));
-
     uniqueTracks.forEach(track => {
       audioCache.current[track.id] = 'downloading'; 
       
@@ -154,7 +129,6 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
       .then(res => res.ok ? res.blob() : Promise.reject('Failed'))
       .then(blob => {
         delete prefetchControllers.current[track.id];
-        dbg('preloadContext: blob ready for', track.id, 'size=', blob.size);
         if (audioCache.current[track.id] === 'downloading') {
           audioCache.current[track.id] = URL.createObjectURL(blob);
         }
@@ -163,7 +137,6 @@ export const useAudioCacheEngine = (audioCache, driveToken, queue, currentIndex,
         delete prefetchControllers.current[track.id];
         if (err.name === 'AbortError') return;
 
-        dbg('preloadContext: FAILED for', track.id, err);
         if (audioCache.current[track.id] === 'downloading') delete audioCache.current[track.id];
       });
     });
