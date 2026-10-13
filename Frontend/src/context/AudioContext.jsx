@@ -1,4 +1,3 @@
-// src/context/AudioContext.jsx
 import React, { createContext, useContext, useState, useRef, useEffect, useCallback } from 'react';
 import { CacheEngine } from "../utils/CacheEngine";
 import { useTokenHeartbeat } from '../hooks/useTokenHeartbeat';
@@ -6,7 +5,6 @@ import { useAudioQueue } from '../hooks/useAudioQueue';
 import { useAudioCacheEngine } from '../hooks/useAudioCacheEngine';
 import { useMediaSession } from '../hooks/useMediaSession';
 
-// 1. Base64 string for a 1-second silent WAV file
 const SILENT_AUDIO_URI = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==";
 
 const AudioContext = createContext();
@@ -19,7 +17,7 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
   const [volume, setVolume] = useState(1);
 
   const audioRef = useRef(new Audio());
-  const silentLoopRef = useRef(null); // 2. Ref for the silent keep-alive player
+  const silentLoopRef = useRef(null);
 
   const abortControllerRef = useRef(null);
   const audioCache = useRef({}); 
@@ -31,7 +29,7 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
 
   const { 
     queue, currentIndex, setCurrentIndex, isShuffled, repeatMode, 
-    currentTrack, isShufflingRef, prepareContext, playContext: originalPlayContext, toggleShuffle, 
+    currentTrack, isShufflingRef, prepareContext, playContext, toggleShuffle, 
     toggleRepeat, syncActiveContext 
   } = useAudioQueue(audioCache);
 
@@ -40,20 +38,6 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
   );
 
   const currentLoadedTrackIdRef = useRef(null);
-
-  // 3. Keep-alive initializer
-  const ensureKeepAlivePlaying = useCallback(() => {
-    if (!silentLoopRef.current) {
-      const silentAudio = new Audio(SILENT_AUDIO_URI);
-      silentAudio.loop = true;
-      silentAudio.volume = 0.01; // Must be non-zero so the OS registers active audio
-      silentLoopRef.current = silentAudio;
-    }
-    if (silentLoopRef.current.paused) {
-      // Catch errors in case it fires outside a trusted gesture
-      silentLoopRef.current.play().catch(() => {}); 
-    }
-  }, []);
 
   const playTrackUrl = useCallback(async (track) => {
     if (!track || !driveToken || driveToken === 'undefined') {
@@ -177,23 +161,20 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
     }
   }, [driveToken, audioCache, queue, updateWindow]);
 
-  // 4. Wrap playContext to start the silent loop
-  const playContext = useCallback((tracks, startIndex = 0, startShuffled = false) => {
-    ensureKeepAlivePlaying();
-    originalPlayContext(tracks, startIndex, startShuffled);
-  }, [ensureKeepAlivePlaying, originalPlayContext]);
-
-
   // --- UI Controls ---
   const togglePlay = useCallback(() => {
-    ensureKeepAlivePlaying(); // 5. Trigger on manual play
     if (!currentTrack) return;
-    if (audioRef.current.paused) audioRef.current.play();
-    else audioRef.current.pause();
-  }, [currentTrack, ensureKeepAlivePlaying]);
+    
+    if (audioRef.current.paused) {
+      audioRef.current.play();
+      if (silentLoopRef.current) silentLoopRef.current.play().catch(() => {});
+    } else {
+      audioRef.current.pause();
+      if (silentLoopRef.current) silentLoopRef.current.pause();
+    }
+  }, [currentTrack]);
 
   const handleNext = useCallback(() => {
-    ensureKeepAlivePlaying(); // 5. Trigger on manual next
     if (repeatMode === 'one') {
       audioRef.current.currentTime = 0;
       audioRef.current.play();
@@ -208,10 +189,9 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
       setCurrentIndex(nextIndex);
       playTrackUrl(queue[nextIndex]);
     }
-  }, [currentIndex, queue, repeatMode, setCurrentIndex, playTrackUrl, ensureKeepAlivePlaying]);
+  }, [currentIndex, queue, repeatMode, setCurrentIndex, playTrackUrl]);
 
   const handlePrev = useCallback(() => {
-    ensureKeepAlivePlaying(); // 5. Trigger on manual prev
     if (audioRef.current.currentTime > 3) {
       audioRef.current.currentTime = 0; 
     } else {
@@ -225,7 +205,7 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
         playTrackUrl(queue[prevIndex]);
       }
     }
-  }, [currentIndex, queue, repeatMode, setCurrentIndex, playTrackUrl, ensureKeepAlivePlaying]);
+  }, [currentIndex, queue, repeatMode, setCurrentIndex, playTrackUrl]);
 
   const latestStateRef = useRef({ currentIndex, queue, repeatMode });
   
@@ -265,6 +245,11 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
     const handlePlay = () => { 
       setIsPlaying(true); 
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+      
+      if (silentLoopRef.current && silentLoopRef.current.paused) {
+         silentLoopRef.current.volume = 0.01;
+         silentLoopRef.current.play().catch(()=>{});
+      }
     };
     
     const handlePause = () => { 
@@ -276,6 +261,7 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
 
       setIsPlaying(false); 
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+      if (silentLoopRef.current) silentLoopRef.current.pause();
     };
     
     audio.addEventListener('timeupdate', updateProgress);
@@ -339,6 +325,21 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
       prepareContext, playContext, togglePlay, handleNext, handlePrev, seek, changeVolume, toggleShuffle, toggleRepeat, preloadContext, syncActiveContext
     }}>
       {children}
+      
+      {/* 
+        The physical silent keep-alive element with CPU Heartbeat 
+        This prevents both MediaSession teardowns and JS thread suspension via Doze Mode
+      */}
+      <audio 
+        ref={silentLoopRef} 
+        src={SILENT_AUDIO_URI} 
+        loop 
+        playsInline 
+        style={{ display: 'none' }} 
+        onTimeUpdate={() => {
+          window.__pwa_keepalive_tick = Date.now();
+        }}
+      />
     </AudioContext.Provider>
   );
 };

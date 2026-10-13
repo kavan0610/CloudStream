@@ -1,19 +1,17 @@
-// src/hooks/useMediaSession.js
 import { useEffect } from 'react';
 
 export const useMediaSession = (currentTrack, isPlaying, togglePlay, handlePrev, handleNext, seek, duration, progress) => {
 
   // 1. Hardware Buttons & Lock Screen Actions
-  // (Metadata assignment is handled synchronously in AudioContext to prevent drops)
   useEffect(() => {
     if ('mediaSession' in navigator) {
       
       navigator.mediaSession.setActionHandler('play', () => {
-        if (!isPlaying) togglePlay();
+        togglePlay(); 
       });
       
       navigator.mediaSession.setActionHandler('pause', () => {
-        if (isPlaying) togglePlay();
+        togglePlay(); 
       });
       
       navigator.mediaSession.setActionHandler('previoustrack', () => {
@@ -31,7 +29,7 @@ export const useMediaSession = (currentTrack, isPlaying, togglePlay, handlePrev,
         }
       });
     }
-  }, [isPlaying, togglePlay, handlePrev, handleNext, seek]);
+  }, [togglePlay, handlePrev, handleNext, seek]);
 
   // 2. Timeline & Progress Bar (Position State)
   useEffect(() => {
