@@ -6,6 +6,9 @@ import { useAudioQueue } from '../hooks/useAudioQueue';
 import { useAudioCacheEngine } from '../hooks/useAudioCacheEngine';
 import { useMediaSession } from '../hooks/useMediaSession';
 
+// 1. Base64 string for a 1-second silent WAV file
+const SILENT_AUDIO_URI = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==";
+
 const AudioContext = createContext();
 export const useAudio = () => useContext(AudioContext);
 
@@ -16,6 +19,8 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
   const [volume, setVolume] = useState(1);
 
   const audioRef = useRef(new Audio());
+  const silentLoopRef = useRef(null); // 2. Ref for the silent keep-alive player
+
   const abortControllerRef = useRef(null);
   const audioCache = useRef({}); 
   
@@ -26,7 +31,7 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
 
   const { 
     queue, currentIndex, setCurrentIndex, isShuffled, repeatMode, 
-    currentTrack, isShufflingRef, prepareContext, playContext, toggleShuffle, 
+    currentTrack, isShufflingRef, prepareContext, playContext: originalPlayContext, toggleShuffle, 
     toggleRepeat, syncActiveContext 
   } = useAudioQueue(audioCache);
 
@@ -35,6 +40,20 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
   );
 
   const currentLoadedTrackIdRef = useRef(null);
+
+  // 3. Keep-alive initializer
+  const ensureKeepAlivePlaying = useCallback(() => {
+    if (!silentLoopRef.current) {
+      const silentAudio = new Audio(SILENT_AUDIO_URI);
+      silentAudio.loop = true;
+      silentAudio.volume = 0.01; // Must be non-zero so the OS registers active audio
+      silentLoopRef.current = silentAudio;
+    }
+    if (silentLoopRef.current.paused) {
+      // Catch errors in case it fires outside a trusted gesture
+      silentLoopRef.current.play().catch(() => {}); 
+    }
+  }, []);
 
   const playTrackUrl = useCallback(async (track) => {
     if (!track || !driveToken || driveToken === 'undefined') {
@@ -158,15 +177,23 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
     }
   }, [driveToken, audioCache, queue, updateWindow]);
 
+  // 4. Wrap playContext to start the silent loop
+  const playContext = useCallback((tracks, startIndex = 0, startShuffled = false) => {
+    ensureKeepAlivePlaying();
+    originalPlayContext(tracks, startIndex, startShuffled);
+  }, [ensureKeepAlivePlaying, originalPlayContext]);
+
 
   // --- UI Controls ---
   const togglePlay = useCallback(() => {
+    ensureKeepAlivePlaying(); // 5. Trigger on manual play
     if (!currentTrack) return;
     if (audioRef.current.paused) audioRef.current.play();
     else audioRef.current.pause();
-  }, [currentTrack]);
+  }, [currentTrack, ensureKeepAlivePlaying]);
 
   const handleNext = useCallback(() => {
+    ensureKeepAlivePlaying(); // 5. Trigger on manual next
     if (repeatMode === 'one') {
       audioRef.current.currentTime = 0;
       audioRef.current.play();
@@ -181,9 +208,10 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
       setCurrentIndex(nextIndex);
       playTrackUrl(queue[nextIndex]);
     }
-  }, [currentIndex, queue, repeatMode, setCurrentIndex, playTrackUrl]);
+  }, [currentIndex, queue, repeatMode, setCurrentIndex, playTrackUrl, ensureKeepAlivePlaying]);
 
   const handlePrev = useCallback(() => {
+    ensureKeepAlivePlaying(); // 5. Trigger on manual prev
     if (audioRef.current.currentTime > 3) {
       audioRef.current.currentTime = 0; 
     } else {
@@ -197,7 +225,7 @@ export const AudioProvider = ({ children, driveToken, userId, onTokenRefresh }) 
         playTrackUrl(queue[prevIndex]);
       }
     }
-  }, [currentIndex, queue, repeatMode, setCurrentIndex, playTrackUrl]);
+  }, [currentIndex, queue, repeatMode, setCurrentIndex, playTrackUrl, ensureKeepAlivePlaying]);
 
   const latestStateRef = useRef({ currentIndex, queue, repeatMode });
   
